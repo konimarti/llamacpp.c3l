@@ -63,15 +63,30 @@ A full generate-text-from-a-prompt example lives in
 
 ### Try it locally
 
-A small model is enough to see it work end to end. For example, Qwen2.5
-0.5B Instruct (quantized, under 500MB):
+1. Build llama.cpp as shared libraries:
 
-```sh
-curl -L -o qwen2.5-0.5b-instruct-q4_k_m.gguf \
-  https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
+   ```sh
+   git clone https://github.com/ggml-org/llama.cpp
+   cmake -S llama.cpp -B llama.cpp/build -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF
+   cmake --build llama.cpp/build -j
+   ```
 
-c3c run generate -- qwen2.5-0.5b-instruct-q4_k_m.gguf "The capital of France is"
-```
+2. Download a small model. Qwen2.5 0.5B Instruct (quantized, under 500MB)
+   works well:
+
+   ```sh
+   curl -L -o qwen2.5-0.5b-instruct-q4_k_m.gguf \
+     https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
+   ```
+
+3. Run the example, pointing c3c at the libraries from step 1, both to link
+   against (`-L`) and to find at runtime (`LD_LIBRARY_PATH`):
+
+   ```sh
+   LD_LIBRARY_PATH=llama.cpp/build/bin c3c run generate -L llama.cpp/build/bin -- qwen2.5-0.5b-instruct-q4_k_m.gguf "The capital of France is"
+   ```
+
+   On macOS, use `DYLD_LIBRARY_PATH` instead of `LD_LIBRARY_PATH`.
 
 Any other GGUF model works the same way; browse more on
 [Hugging Face](https://huggingface.co/models?library=gguf).
