@@ -1,17 +1,17 @@
 # llamacpp.c3l
 
-C3 bindings for [llama.cpp](https://github.com/ggml-org/llama.cpp) - run
+C3 bindings for [llama.cpp](https://github.com/ggml-org/llama.cpp): run
 GGUF language models directly from C3.
 
 ### Features
 
 - Full coverage of `llama.h`'s public API: model loading, context, batching,
   tokenization, sampling, LoRA adapters, quantization, and training.
-- Direct binding - C3 names mirror the C names, so anything you know from
+- Direct binding. C3 names mirror the C names, so anything you know from
   the C API or the official docs carries straight over.
 - Convenience wrappers for the few spots where the raw C API is tedious:
   tokenizing, batching/decoding, and error handling via C3 optionals.
-- No C3 dependencies - just the native `libllama`/`libggml` libraries.
+- No C3 dependencies, only the native `libllama`/`libggml` libraries.
 
 ### Why
 
@@ -20,9 +20,9 @@ maintaining the FFI glue yourself.
 
 ### Installation
 
-You'll need [c3c](https://c3-lang.org) installed, and a GGUF model file
-(a quantized model format llama.cpp reads directly - download one from
-e.g. [Hugging Face](https://huggingface.co/models?library=gguf)).
+You'll need [c3c](https://c3-lang.org) installed, and a GGUF model file (a
+quantized model format llama.cpp reads directly; download one from e.g.
+[Hugging Face](https://huggingface.co/models?library=gguf)).
 
 1. Build llama.cpp as shared libraries: `cmake -B llamacpp-build -DBUILD_SHARED_LIBS=ON && cmake --build llamacpp-build` from
    [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp), then install
@@ -57,6 +57,6 @@ fn void main()
 }
 ```
 
-A full generate-text-from-a-prompt example is in
-[example/generate.c3](example/generate.c3) - run it with
+A full generate-text-from-a-prompt example lives in
+[example/generate.c3](example/generate.c3). Run it with
 `c3c run generate -- path/to/model.gguf "your prompt"`.

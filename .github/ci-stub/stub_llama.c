@@ -18,7 +18,7 @@ struct llama_context {
     int dummy;
 };
 
-// Static dummy objects - no malloc/free used
+// Static dummy objects; no malloc/free used
 static struct llama_model   s_dummy_model;
 static struct llama_vocab   s_dummy_vocab;
 static struct llama_context s_dummy_context;

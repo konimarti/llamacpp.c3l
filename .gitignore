@@ -6,3 +6,4 @@ reference/
 /test_*
 .github/ci-stub/lib/
 ci-stub-lib/
+tags

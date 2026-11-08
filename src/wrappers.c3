@@ -4,7 +4,7 @@
 // cover the handful of spots where the raw C API is unusually tedious to
 // call correctly from C3: the tokenize/detokenize size-probing dance, the
 // batch/decode loop, and null/negative-return error handling. Everything
-// else is already a clean 1:1 call - use the raw `llama::` functions
+// else is already a clean 1:1 call; use the raw `llama::` functions
 // directly for that.
 //
 // These live in their own submodules (llama::model, llama::context,
@@ -14,7 +14,7 @@
 //
 // Memory: every LlamaToken[]/String these functions return is allocated
 // with the passed-in `allocator` (the thread heap by default) and is the
-// caller's to free - e.g. `allocator.release(tokens.ptr, false)`, or pass
+// caller's to free, e.g. `allocator.release(tokens.ptr, false)`, or pass
 // `tmem` and wrap the call site in `@pool() { ... };` to avoid manual
 // frees entirely (see example/generate.c3).
 
@@ -46,7 +46,7 @@ fn LlamaContext*? init(LlamaModel* model, LlamaContextParams params = llama::con
 // matching batch_free() call.
 //
 // llama_decode()'s raw return code distinguishes KV-cache-full (1),
-// user-abort (2), and fatal (< -1) cases - this wrapper collapses all of
+// user-abort (2), and fatal (< -1) cases; this wrapper collapses all of
 // them to DECODE_FAILED. Call llama::decode() directly if you need that
 // distinction.
 fn void? decode(LlamaContext* ctx, LlamaToken[] tokens)
@@ -79,7 +79,7 @@ fn LlamaToken[]? tokenize(LlamaVocab* vocab, String text, bool add_special, bool
 {
 	int n = llama::tokenize(vocab, text.ptr, (int)text.len, null, 0, add_special, parse_special);
 	// llama_tokenize() returns INT32_MIN (not just "negative") on an
-	// internal overflow - negating it would overflow right back to
+	// internal overflow; negating it would overflow right back to
 	// itself in two's complement, so it must be checked before `-n`.
 	if (n == int::min) return TOKENIZE_FAILED~;
 	int needed = n < 0 ? -n : n;

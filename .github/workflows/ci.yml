@@ -81,8 +81,8 @@ jobs:
       # Integration smoke test: build and run the 'generate' example against
       # a FAKE stub libllama (.github/ci-stub/stub_llama.c) instead of a real
       # (slow) llama.cpp build. This exercises the full build+link+run
-      # pipeline - including project.json's "linked-libraries" for the
-      # generate target - on every platform.
+      # pipeline, including project.json's "linked-libraries" for the
+      # generate target, on every platform.
       # ---------------------------------------------------------------------
 
       # Linux/macOS: plain cc/clang, verified locally on Linux (see
@@ -108,7 +108,7 @@ jobs:
 
       # Windows: MSVC cl.exe (set up by ilammy/msvc-dev-cmd above). LLAMA_API
       # in reference/llama.h only expands to __declspec(dllexport) when
-      # LLAMA_SHARED+LLAMA_BUILD are both defined - without them a Windows
+      # LLAMA_SHARED+LLAMA_BUILD are both defined; without them a Windows
       # DLL exports nothing and MSVC skips generating the .lib entirely.
       - name: Build stub libllama (Windows)
         if: runner.os == 'Windows'
@@ -146,7 +146,7 @@ jobs:
           esac
           c3c build generate -L "$libdir"
 
-      # Smoke-run the binary against the stub - no real GGUF model is needed
+      # Smoke-run the binary against the stub; no real GGUF model is needed
       # since the stub fakes every llama_* call.
       - name: Run generate smoke test
         shell: bash

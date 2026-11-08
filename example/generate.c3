@@ -47,7 +47,7 @@ fn void main(String[] args)
 		int n_predict = 64;
 		if (prompt_tokens.len + n_predict > ctx_params.n_ctx)
 		{
-			io::printfn("prompt too long for n_ctx=%d - shorten it or raise n_ctx", ctx_params.n_ctx);
+			io::printfn("prompt too long for n_ctx=%d, shorten it or raise n_ctx", ctx_params.n_ctx);
 			return;
 		}
 
@@ -62,7 +62,7 @@ fn void main(String[] args)
 			io::printf("%s", llama::vocab::token_to_piece(vocab, token, true, tmem)!!);
 
 			// Only feed the token back in if another sampling round will
-			// actually use it - the last iteration's token never gets used.
+			// actually use it; the last iteration's token never gets used.
 			if (i + 1 < n_predict)
 			{
 				LlamaToken[1] next = { token };
