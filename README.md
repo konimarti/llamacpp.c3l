@@ -60,3 +60,18 @@ fn void main()
 A full generate-text-from-a-prompt example lives in
 [example/generate.c3](example/generate.c3). Run it with
 `c3c run generate -- path/to/model.gguf "your prompt"`.
+
+### Try it locally
+
+A small model is enough to see it work end to end. For example, Qwen2.5
+0.5B Instruct (quantized, under 500MB):
+
+```sh
+curl -L -o qwen2.5-0.5b-instruct-q4_k_m.gguf \
+  https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
+
+c3c run generate -- qwen2.5-0.5b-instruct-q4_k_m.gguf "The capital of France is"
+```
+
+Any other GGUF model works the same way; browse more on
+[Hugging Face](https://huggingface.co/models?library=gguf).
