@@ -35,20 +35,36 @@ jobs:
 
       # Install c3c from the official release assets (no third-party setup action).
       # Asset names per platform: c3-linux.tar.gz, c3-macos.zip, c3-windows.zip.
-      # github.com/c3lang/c3c/releases has shown extended 504s serving these
-      # assets before; the generous retry budget below is there for that.
+      # github.com/c3lang/c3c/releases has shown individual release assets
+      # stuck returning 504 for extended periods (observed: one platform's
+      # asset failing consistently for minutes while another platform's
+      # asset on the same release succeeds immediately); a short retry
+      # can't tell a stuck object from a brief blip, so fall through a
+      # couple of nearby releases rather than retrying the same one forever.
+      # Falls forward (never to an older release) to stay compatible with
+      # whatever C3 syntax this binding actually uses.
       - name: Install c3c
         shell: bash
         run: |
           set -e
-          VERSION="${{ github.event.inputs.version || env.C3_VERSION }}"
+          PRIMARY="${{ github.event.inputs.version || env.C3_VERSION }}"
           case "$RUNNER_OS" in
             Linux)   asset=c3-linux.tar.gz ;;
             macOS)   asset=c3-macos.zip ;;
             Windows) asset=c3-windows.zip ;;
           esac
-          curl -fsSL --retry 8 --retry-delay 15 --retry-connrefused --retry-all-errors \
-            -o "$asset" "https://github.com/c3lang/c3c/releases/download/${VERSION}/${asset}"
+          for VERSION in "$PRIMARY" v0.8.5_1 latest-prerelease-tag; do
+            echo "Trying c3c ${VERSION}..."
+            if curl -fsSL --retry 3 --retry-delay 10 --retry-connrefused --retry-all-errors \
+                 -o "$asset" "https://github.com/c3lang/c3c/releases/download/${VERSION}/${asset}"
+            then
+              echo "Downloaded c3c ${VERSION}."
+              break
+            fi
+            echo "c3c ${VERSION} download failed, trying the next fallback version."
+            rm -f "$asset"
+          done
+          test -f "$asset" || { echo "::error::could not download c3c from any of: $PRIMARY v0.8.5_1 latest-prerelease-tag"; exit 1; }
           mkdir -p c3c-install
           case "$asset" in
             *.tar.gz) tar xzf "$asset" -C c3c-install ;;
