@@ -10,10 +10,10 @@ on:
       version:
         description: 'C3 compiler version to use'
         required: false
-        default: 'v0.8.5_1'
+        default: 'v0.8.5'
 
 env:
-  C3_VERSION: v0.8.5_1
+  C3_VERSION: v0.8.5
 
 jobs:
   build:
@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Sets up cl.exe/link.exe and the INCLUDE/LIB/PATH env vars for x64 -
+      # Sets up cl.exe/link.exe and the INCLUDE/LIB/PATH env vars for x64,
       # required for the Windows stub build step below. No-op on Linux/macOS.
       - name: Set up MSVC (Windows only)
         if: runner.os == 'Windows'
@@ -45,7 +45,8 @@ jobs:
             macOS)   asset=c3-macos.zip ;;
             Windows) asset=c3-windows.zip ;;
           esac
-          curl -fsSL -o "$asset" "https://github.com/c3lang/c3c/releases/download/${VERSION}/${asset}"
+          curl -fsSL --retry 3 --retry-delay 5 --retry-connrefused \
+            -o "$asset" "https://github.com/c3lang/c3c/releases/download/${VERSION}/${asset}"
           mkdir -p c3c-install
           case "$asset" in
             *.tar.gz) tar xzf "$asset" -C c3c-install ;;
