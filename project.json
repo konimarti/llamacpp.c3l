@@ -12,7 +12,8 @@
 		"generate": {
 			"type": "executable",
 			"sources": [ "src/**", "example/generate.c3" ],
-			"linked-libraries": [ "llama", "ggml", "ggml-base", "ggml-cpu" ]
+			"linked-libraries": [ "llama", "ggml", "ggml-base" ],
+			"linker-search-paths": [ "llama.cpp/build/bin" ]
 		}
 	}
 }

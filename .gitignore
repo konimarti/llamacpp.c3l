@@ -1,5 +1,7 @@
 build/
 obj/
+llama.cpp/
+*.gguf
 .claude/
 STYLE_CONTRACT.md
 reference/
