@@ -79,12 +79,11 @@ A full generate-text-from-a-prompt example lives in
      https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
    ```
 
-3. Run the example. `project.json` already points c3c's linker at
-   `llama.cpp/build/bin` for this target, so only the runtime loader path
-   is left to set:
+3. Run the example, pointing c3c at the libraries from step 1, both to link
+   against (`-L`) and to find at runtime (`LD_LIBRARY_PATH`):
 
    ```sh
-   LD_LIBRARY_PATH=llama.cpp/build/bin c3c run generate -- qwen2.5-0.5b-instruct-q4_k_m.gguf "The capital of France is"
+   LD_LIBRARY_PATH=llama.cpp/build/bin c3c run generate -L llama.cpp/build/bin -- qwen2.5-0.5b-instruct-q4_k_m.gguf "The capital of France is"
    ```
 
    On macOS, use `DYLD_LIBRARY_PATH` instead of `LD_LIBRARY_PATH`.
