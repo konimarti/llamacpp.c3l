@@ -1,0 +1,246 @@
+// vocab_sampling.c3i
+// Vocab queries, Tokenization, Chat templates, and the start of the
+// Sampling API (the llama_sampler_i interface struct, llama_sampler /
+// llama_sampler_data, and the generic sampler + sampler-chain functions)
+// for the llama C3 bindings. The concrete sampler constructors
+// (llama_sampler_init_greedy and friends) belong to sampler_init.c3i.
+//
+// Source: include/llama.h (see ../reference/llama.h), lines 1203-1474 of
+// https://github.com/ggml-org/llama.cpp, plus llama_sampler_sample (line 1652).
+module llama;
+
+// --- Vocab ---
+
+extern fn ZString vocab_get_text(LlamaVocab* vocab, LlamaToken token) @cname("llama_vocab_get_text");
+
+extern fn float vocab_get_score(LlamaVocab* vocab, LlamaToken token) @cname("llama_vocab_get_score");
+
+extern fn LlamaTokenAttr vocab_get_attr(LlamaVocab* vocab, LlamaToken token) @cname("llama_vocab_get_attr");
+
+// Check if the token is supposed to end generation (end-of-generation, eg. EOS, EOT, etc.)
+extern fn bool vocab_is_eog(LlamaVocab* vocab, LlamaToken token) @cname("llama_vocab_is_eog");
+
+// Identify if Token Id is a control token or a render-able token
+extern fn bool vocab_is_control(LlamaVocab* vocab, LlamaToken token) @cname("llama_vocab_is_control");
+
+// Special tokens
+extern fn LlamaToken vocab_bos(LlamaVocab* vocab) @cname("llama_vocab_bos"); // beginning-of-sentence
+extern fn LlamaToken vocab_eos(LlamaVocab* vocab) @cname("llama_vocab_eos"); // end-of-sentence
+extern fn LlamaToken vocab_eot(LlamaVocab* vocab) @cname("llama_vocab_eot"); // end-of-turn
+extern fn LlamaToken vocab_sep(LlamaVocab* vocab) @cname("llama_vocab_sep"); // sentence separator
+extern fn LlamaToken vocab_nl(LlamaVocab* vocab) @cname("llama_vocab_nl");   // next-line
+extern fn LlamaToken vocab_pad(LlamaVocab* vocab) @cname("llama_vocab_pad"); // padding
+extern fn LlamaToken vocab_mask(LlamaVocab* vocab) @cname("llama_vocab_mask"); // mask
+
+extern fn bool vocab_get_add_bos(LlamaVocab* vocab) @cname("llama_vocab_get_add_bos");
+extern fn bool vocab_get_add_eos(LlamaVocab* vocab) @cname("llama_vocab_get_add_eos");
+extern fn bool vocab_get_add_sep(LlamaVocab* vocab) @cname("llama_vocab_get_add_sep");
+
+// model-specific suppress tokens (gguf key: tokenizer.ggml.suppress_tokens)
+extern fn LlamaToken* vocab_get_suppress_tokens(LlamaVocab* vocab, int* n_suppress_tokens) @cname("llama_vocab_get_suppress_tokens");
+
+extern fn LlamaToken vocab_fim_pre(LlamaVocab* vocab) @cname("llama_vocab_fim_pre");
+extern fn LlamaToken vocab_fim_suf(LlamaVocab* vocab) @cname("llama_vocab_fim_suf");
+extern fn LlamaToken vocab_fim_mid(LlamaVocab* vocab) @cname("llama_vocab_fim_mid");
+extern fn LlamaToken vocab_fim_pad(LlamaVocab* vocab) @cname("llama_vocab_fim_pad");
+extern fn LlamaToken vocab_fim_rep(LlamaVocab* vocab) @cname("llama_vocab_fim_rep");
+extern fn LlamaToken vocab_fim_sep(LlamaVocab* vocab) @cname("llama_vocab_fim_sep");
+
+// DEPRECATED: use vocab_get_text instead
+extern fn ZString token_get_text(LlamaVocab* vocab, LlamaToken token) @cname("llama_token_get_text") @deprecated("use vocab_get_text instead");
+// DEPRECATED: use vocab_get_score instead
+extern fn float token_get_score(LlamaVocab* vocab, LlamaToken token) @cname("llama_token_get_score") @deprecated("use vocab_get_score instead");
+// DEPRECATED: use vocab_get_attr instead
+extern fn LlamaTokenAttr token_get_attr(LlamaVocab* vocab, LlamaToken token) @cname("llama_token_get_attr") @deprecated("use vocab_get_attr instead");
+// DEPRECATED: use vocab_is_eog instead
+extern fn bool token_is_eog(LlamaVocab* vocab, LlamaToken token) @cname("llama_token_is_eog") @deprecated("use vocab_is_eog instead");
+// DEPRECATED: use vocab_is_control instead
+extern fn bool token_is_control(LlamaVocab* vocab, LlamaToken token) @cname("llama_token_is_control") @deprecated("use vocab_is_control instead");
+// DEPRECATED: use vocab_bos instead
+extern fn LlamaToken token_bos(LlamaVocab* vocab) @cname("llama_token_bos") @deprecated("use vocab_bos instead");
+// DEPRECATED: use vocab_eos instead
+extern fn LlamaToken token_eos(LlamaVocab* vocab) @cname("llama_token_eos") @deprecated("use vocab_eos instead");
+// DEPRECATED: use vocab_eot instead
+extern fn LlamaToken token_eot(LlamaVocab* vocab) @cname("llama_token_eot") @deprecated("use vocab_eot instead");
+// DEPRECATED: use vocab_cls instead
+extern fn LlamaToken token_cls(LlamaVocab* vocab) @cname("llama_token_cls") @deprecated("use vocab_cls instead");
+// DEPRECATED: use vocab_sep instead
+extern fn LlamaToken token_sep(LlamaVocab* vocab) @cname("llama_token_sep") @deprecated("use vocab_sep instead");
+// DEPRECATED: use vocab_nl instead
+extern fn LlamaToken token_nl(LlamaVocab* vocab) @cname("llama_token_nl") @deprecated("use vocab_nl instead");
+// DEPRECATED: use vocab_pad instead
+extern fn LlamaToken token_pad(LlamaVocab* vocab) @cname("llama_token_pad") @deprecated("use vocab_pad instead");
+// DEPRECATED: use vocab_get_add_bos instead
+extern fn bool add_bos_token(LlamaVocab* vocab) @cname("llama_add_bos_token") @deprecated("use vocab_get_add_bos instead");
+// DEPRECATED: use vocab_get_add_eos instead
+extern fn bool add_eos_token(LlamaVocab* vocab) @cname("llama_add_eos_token") @deprecated("use vocab_get_add_eos instead");
+// DEPRECATED: use vocab_fim_pre instead
+extern fn LlamaToken token_fim_pre(LlamaVocab* vocab) @cname("llama_token_fim_pre") @deprecated("use vocab_fim_pre instead");
+// DEPRECATED: use vocab_fim_suf instead
+extern fn LlamaToken token_fim_suf(LlamaVocab* vocab) @cname("llama_token_fim_suf") @deprecated("use vocab_fim_suf instead");
+// DEPRECATED: use vocab_fim_mid instead
+extern fn LlamaToken token_fim_mid(LlamaVocab* vocab) @cname("llama_token_fim_mid") @deprecated("use vocab_fim_mid instead");
+// DEPRECATED: use vocab_fim_pad instead
+extern fn LlamaToken token_fim_pad(LlamaVocab* vocab) @cname("llama_token_fim_pad") @deprecated("use vocab_fim_pad instead");
+// DEPRECATED: use vocab_fim_rep instead
+extern fn LlamaToken token_fim_rep(LlamaVocab* vocab) @cname("llama_token_fim_rep") @deprecated("use vocab_fim_rep instead");
+// DEPRECATED: use vocab_fim_sep instead
+extern fn LlamaToken token_fim_sep(LlamaVocab* vocab) @cname("llama_token_fim_sep") @deprecated("use vocab_fim_sep instead");
+
+// CLS is equivalent to BOS
+// DEPRECATED: use vocab_bos instead
+extern fn LlamaToken vocab_cls(LlamaVocab* vocab) @cname("llama_vocab_cls") @deprecated("use vocab_bos instead"); // classification
+
+// --- Tokenization ---
+// The API is thread-safe.
+
+// Convert the provided text into tokens.
+// tokens must be large enough to hold the resulting tokens.
+// Returns the number of tokens on success, no more than n_tokens_max;
+// a negative number on failure (the number of tokens that would have been
+// returned); INT32_MIN on overflow.
+// add_special: allow adding BOS and EOS tokens if the model is configured to do so.
+// parse_special: allow tokenizing special and/or control tokens which otherwise
+// are not exposed and treated as plaintext. Does not insert a leading space.
+// text is an explicitly length-bounded byte range (text_len), not
+// necessarily null-terminated - char*, not ZString, so callers can pass a
+// String slice without needing a null terminator.
+extern fn int tokenize(
+	LlamaVocab* vocab,
+	char* text,
+	int text_len,
+	LlamaToken* tokens,
+	int n_tokens_max,
+	bool add_special,
+	bool parse_special) @cname("llama_tokenize");
+
+// Token Id -> Piece. Uses the vocabulary in the provided context.
+// Does not write null terminator to the buffer.
+// User can skip up to 'lstrip' leading spaces before copying.
+// special: if true, special tokens are rendered in the output.
+extern fn int token_to_piece(
+	LlamaVocab* vocab,
+	LlamaToken token,
+	char* buf,
+	int length,
+	int lstrip,
+	bool special) @cname("llama_token_to_piece");
+
+// Convert the provided tokens into text (inverse of tokenize()).
+// text must be large enough to hold the resulting text.
+// Returns the number of chars/bytes on success, no more than text_len_max;
+// a negative number on failure (the number of chars/bytes that would have been returned).
+// remove_special: allow removing BOS and EOS tokens if the model is configured to do so.
+// unparse_special: if true, special tokens are rendered in the output.
+extern fn int detokenize(
+	LlamaVocab* vocab,
+	LlamaToken* tokens,
+	int n_tokens,
+	char* text,
+	int text_len_max,
+	bool remove_special,
+	bool unparse_special) @cname("llama_detokenize");
+
+// --- Chat templates ---
+
+// Apply chat template. Inspired by hf apply_chat_template() on python.
+// NOTE: does not use a jinja parser, only supports a pre-defined list of templates.
+// tmpl: a Jinja template to use for this chat.
+// chat: pointer to a list of multiple llama_chat_message; n_msg: number of messages.
+// add_ass: whether to end the prompt with the token(s) that indicate the start of an assistant message.
+// buf: buffer to hold the output formatted prompt (recommended alloc: 2 * total chars of all messages);
+// length: size of the allocated buffer.
+// Returns the total number of bytes of the formatted prompt; if larger than length, re-alloc and re-apply.
+extern fn int chat_apply_template(
+	ZString tmpl,
+	LlamaChatMessage* chat,
+	usz n_msg,
+	bool add_ass,
+	char* buf,
+	int length) @cname("llama_chat_apply_template");
+
+// Get list of built-in chat templates
+extern fn int chat_builtin_templates(ZString* output, usz len) @cname("llama_chat_builtin_templates");
+
+// --- Sampling API ---
+
+// LlamaSamplerContext (typedef void * llama_sampler_context_t;) is defined
+// in sampler_init.c3i, which also owns the generic llama_sampler_* mirror
+// functions and llama_sampler_chain_* - both files share module llama.
+
+struct LlamaSamplerData
+{
+	GgmlTensor* logits;
+	GgmlTensor* probs;
+	GgmlTensor* sampled;
+	GgmlTensor* candidates;
+}
+
+// function-pointer types for the llama_sampler_i vtable fields (a C function
+// pointer cannot be declared inline as a struct field in C3)
+alias LlamaSamplerNameFn = fn ZString (LlamaSampler* smpl);
+alias LlamaSamplerAcceptFn = fn void (LlamaSampler* smpl, LlamaToken token);
+alias LlamaSamplerApplyFn = fn void (LlamaSampler* smpl, LlamaTokenDataArray* cur_p);
+alias LlamaSamplerResetFn = fn void (LlamaSampler* smpl);
+alias LlamaSamplerCloneFn = fn LlamaSampler* (LlamaSampler* smpl);
+alias LlamaSamplerFreeFn = fn void (LlamaSampler* smpl);
+alias LlamaSamplerBackendInitFn = fn bool (LlamaSampler* smpl, GgmlBackendBufferType buft, uint n_outputs_max_per_seq);
+alias LlamaSamplerBackendAcceptFn = fn void (LlamaSampler* smpl, GgmlContext* ctx, GgmlCgraph* gf, GgmlTensor* selected_token);
+alias LlamaSamplerBackendApplyFn = fn void (LlamaSampler* smpl, GgmlContext* ctx, GgmlCgraph* gf, LlamaSamplerData* data);
+alias LlamaSamplerBackendSetInputFn = fn void (LlamaSampler* smpl);
+alias LlamaSamplerBackendResetFn = fn void (LlamaSampler* smpl);
+alias LlamaSamplerCopyStateFn = fn void (LlamaSampler* src, LlamaSampler* dst);
+
+// user code can implement the interface below in order to create custom llama_sampler
+struct LlamaSamplerI
+{
+	LlamaSamplerNameFn name;           // can be NULL
+	LlamaSamplerAcceptFn accept;       // can be NULL
+	LlamaSamplerApplyFn apply;         // required
+	LlamaSamplerResetFn reset;         // can be NULL
+	LlamaSamplerCloneFn clone;         // can be NULL if ctx is NULL
+	LlamaSamplerFreeFn free;           // can be NULL if ctx is NULL
+
+	// [EXPERIMENTAL]
+	// backend sampling interface:
+
+	// return true if the backend supports all ops needed by the sampler and can handle up to n_outputs_max_per_seq outputs per sequence
+	// note: call once per sampler
+	LlamaSamplerBackendInitFn backend_init;
+
+	// call after .backend_apply()
+	LlamaSamplerBackendAcceptFn backend_accept;
+
+	// call after .backend_init()
+	LlamaSamplerBackendApplyFn backend_apply;
+
+	// called before graph execution to set inputs for the current ubatch
+	LlamaSamplerBackendSetInputFn backend_set_input;
+
+	// called before rebuilding a sampling graph to clear any internal sampler state
+	LlamaSamplerBackendResetFn backend_reset;
+
+	// copy mutable state from src into dst while keeping dst's references to the current sampling graph
+	// src and dst must have the same type and configuration
+	LlamaSamplerCopyStateFn copy_state;
+}
+
+// struct llama_sampler - named LlamaSamplerDef because LlamaSampler is already
+// typedef'd to void in types.c3i (the opaque handle used by all signatures above)
+struct LlamaSamplerDef
+{
+	LlamaSamplerI* iface;
+
+	LlamaSamplerContext ctx;
+}
+
+// [EXPERIMENTAL]
+// attach a sampler to the context
+// note: prefer initializing the context with llama_context_params.samplers when possible
+extern fn bool set_sampler(LlamaContext* ctx, LlamaSeqId seq_id, LlamaSampler* smpl) @cname("llama_set_sampler");
+
+// The generic llama_sampler_* mirror functions (sampler_init, _name, _accept,
+// _apply, _reset, _clone, _copy, _free), llama_sampler_chain_*, and
+// sampler_sample live in sampler_init.c3i (reference/llama.h lines
+// 1442-1752) - they sit physically after the constructor family in the
+// header, not in this file's 1203-1441 range.

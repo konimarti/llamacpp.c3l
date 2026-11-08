@@ -1,0 +1,161 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'C3 compiler version to use'
+        required: false
+        default: 'v0.8.5_1'
+
+env:
+  C3_VERSION: v0.8.5_1
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sets up cl.exe/link.exe and the INCLUDE/LIB/PATH env vars for x64 -
+      # required for the Windows stub build step below. No-op on Linux/macOS.
+      - name: Set up MSVC (Windows only)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # Install c3c from the official release assets (no third-party setup action).
+      # Asset names per platform: c3-linux.tar.gz, c3-macos.zip, c3-windows.zip.
+      - name: Install c3c
+        shell: bash
+        run: |
+          set -e
+          VERSION="${{ github.event.inputs.version || env.C3_VERSION }}"
+          case "$RUNNER_OS" in
+            Linux)   asset=c3-linux.tar.gz ;;
+            macOS)   asset=c3-macos.zip ;;
+            Windows) asset=c3-windows.zip ;;
+          esac
+          curl -fsSL -o "$asset" "https://github.com/c3lang/c3c/releases/download/${VERSION}/${asset}"
+          mkdir -p c3c-install
+          case "$asset" in
+            *.tar.gz) tar xzf "$asset" -C c3c-install ;;
+            *.zip)
+              if [ "$RUNNER_OS" = Windows ]; then
+                7z x -y -bd "$asset" -oc3c-install >/dev/null
+              else
+                unzip -q "$asset" -d c3c-install
+              fi ;;
+          esac
+          # the release archives unpack to a top-level c3/ directory
+          if [ "$RUNNER_OS" = Windows ]; then
+            echo "$(cygpath -w "$PWD/c3c-install/c3")" >> "$GITHUB_PATH"
+          else
+            echo "$PWD/c3c-install/c3" >> "$GITHUB_PATH"
+          fi
+          # macOS release zip is unsigned; drop the quarantine attribute if present
+          if [ "$RUNNER_OS" = macOS ]; then
+            xattr -d com.apple.quarantine c3c-install/c3/c3c 2>/dev/null || true
+          fi
+
+      - name: c3c version
+        shell: bash
+        run: c3c -V
+
+      # Primary check: the static-lib target has zero external dependencies, so
+      # this validates that the whole C3 binding compiles cleanly on this OS.
+      - name: Build binding (c3c build llama)
+        shell: bash
+        run: c3c build llama
+
+      # ---------------------------------------------------------------------
+      # Integration smoke test: build and run the 'generate' example against
+      # a FAKE stub libllama (.github/ci-stub/stub_llama.c) instead of a real
+      # (slow) llama.cpp build. This exercises the full build+link+run
+      # pipeline - including project.json's "linked-libraries" for the
+      # generate target - on every platform.
+      # ---------------------------------------------------------------------
+
+      # Linux/macOS: plain cc/clang, verified locally on Linux (see
+      # .github/ci-stub/ for the exact commands this mirrors).
+      - name: Build stub libllama (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -e
+          mkdir -p .github/ci-stub/lib
+          case "$RUNNER_OS" in
+            Linux) ext=so ;;
+            macOS) ext=dylib ;;
+          esac
+          cc -fPIC -shared -O2 \
+            -I.github/ci-stub -Ireference \
+            .github/ci-stub/stub_llama.c \
+            -o ".github/ci-stub/lib/libllama.$ext"
+          for lib in ggml ggml-base ggml-cpu; do
+            cc -fPIC -shared -x c /dev/null -o ".github/ci-stub/lib/lib${lib}.$ext"
+          done
+          ls -la .github/ci-stub/lib
+
+      # Windows: MSVC cl.exe (set up by ilammy/msvc-dev-cmd above). LLAMA_API
+      # in reference/llama.h only expands to __declspec(dllexport) when
+      # LLAMA_SHARED+LLAMA_BUILD are both defined - without them a Windows
+      # DLL exports nothing and MSVC skips generating the .lib entirely.
+      - name: Build stub libllama (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $StubDir = "ci-stub-lib"
+          New-Item -ItemType Directory -Force -Path $StubDir | Out-Null
+
+          cl.exe /nologo /LD /MD /O2 `
+            /I "reference" /I ".github\ci-stub" `
+            /DLLAMA_SHARED /DLLAMA_BUILD `
+            ".github\ci-stub\stub_llama.c" `
+            "/Fe:$StubDir\llama.dll" `
+            /link "/IMPLIB:$StubDir\llama.lib"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to build llama.dll stub" }
+
+          # MSVC only emits an import library if the DLL exports at least
+          # one symbol, so these stand-ins need one dummy export each.
+          Set-Content -Path "$StubDir\dummy_ggml.c" -Value '__declspec(dllexport) void ggml_stub_anchor(void) {}'
+          foreach ($lib in @('ggml', 'ggml-base', 'ggml-cpu')) {
+            cl.exe /nologo /LD /MD "$StubDir\dummy_ggml.c" "/Fe:$StubDir\$lib.dll" /link "/IMPLIB:$StubDir\$lib.lib"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to build $lib.dll stub" }
+          }
+          Remove-Item "$StubDir\*.obj", "$StubDir\*.exp" -Force -ErrorAction SilentlyContinue
+          Get-ChildItem $StubDir
+
+      # project.json's generate target already declares linked-libraries, so
+      # only the search path (-L) needs to be supplied here.
+      - name: Build generate against stub
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows) libdir="ci-stub-lib" ;;
+            *)       libdir=".github/ci-stub/lib" ;;
+          esac
+          c3c build generate -L "$libdir"
+
+      # Smoke-run the binary against the stub - no real GGUF model is needed
+      # since the stub fakes every llama_* call.
+      - name: Run generate smoke test
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows)
+              PATH="$PWD/ci-stub-lib:$PATH" ./build/generate.exe fake.gguf "The capital of France is" ;;
+            macOS)
+              DYLD_LIBRARY_PATH="$PWD/.github/ci-stub/lib" ./build/generate fake.gguf "The capital of France is" ;;
+            *)
+              LD_LIBRARY_PATH="$PWD/.github/ci-stub/lib" ./build/generate fake.gguf "The capital of France is" ;;
+          esac

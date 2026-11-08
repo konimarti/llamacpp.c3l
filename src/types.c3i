@@ -1,0 +1,493 @@
+// types.c3i
+// Foundation layer for the llama C3 bindings: opaque handles, plain
+// typedefs, enums/constdefs and plain-data structs declared in the first
+// third of llama.h (up to and including the default-params getters and
+// backend/threadpool init). Every other file in this library imports these
+// names - do not redefine them elsewhere.
+//
+// Source: include/llama.h (see ../reference/llama.h), lines 55-508 of
+// https://github.com/ggml-org/llama.cpp
+module llama;
+
+// top-of-file #define constants (llama.h lines 37-49)
+const uint DEFAULT_SEED = 0xFFFFFFFF;
+const int TOKEN_NULL = -1;
+
+const uint FILE_MAGIC_GGLA = 0x67676c61u; // 'ggla'
+const uint FILE_MAGIC_GGSN = 0x6767736eu; // 'ggsn'
+const uint FILE_MAGIC_GGSQ = 0x67677371u; // 'ggsq'
+
+const uint SESSION_MAGIC = FILE_MAGIC_GGSN;
+const int SESSION_VERSION = 11;
+
+const uint STATE_SEQ_MAGIC = FILE_MAGIC_GGSQ;
+const int STATE_SEQ_VERSION = 4;
+
+// --- opaque handles (incomplete C structs, always used as T*) ---
+
+typedef LlamaVocab = void;
+typedef LlamaModel = void;
+typedef LlamaContext = void;
+typedef LlamaSampler = void;
+typedef LlamaAdapterLora = void;
+
+// typedef struct llama_memory_i * llama_memory_t;
+alias LlamaMemory = void*;
+
+// --- plain typedefs ---
+
+alias LlamaPos = int;
+alias LlamaToken = int;
+alias LlamaSeqId = int;
+
+// enum llama_vocab_type - implicitly sequential, no gaps.
+enum LlamaVocabType : CInt
+{
+	VOCAB_TYPE_NONE,   // For models without vocab
+	VOCAB_TYPE_SPM,    // LLaMA tokenizer based on byte-level BPE with byte fallback
+	VOCAB_TYPE_BPE,    // GPT-2 tokenizer based on byte-level BPE
+	VOCAB_TYPE_WPM,    // BERT tokenizer based on WordPiece
+	VOCAB_TYPE_UGM,    // T5 tokenizer based on Unigram
+	VOCAB_TYPE_RWKV,   // RWKV tokenizer based on greedy tokenization
+	VOCAB_TYPE_PLAMO2, // PLaMo-2 tokenizer based on Aho-Corasick with dynamic programming
+	VOCAB_TYPE_TEST,   // Dummy tokenizer for testing
+	VOCAB_TYPE_PLAMO3, // PLaMo-3 tokenizer with pre-segmentation and dynamic programming
+}
+
+// enum llama_rope_type - values are inherited from GGML_ROPE_TYPE_* #defines, not sequential.
+constdef LlamaRopeType : CInt
+{
+	ROPE_TYPE_NONE   = -1,
+	ROPE_TYPE_NORM   = 0,
+	ROPE_TYPE_NEOX   = 2,  // GGML_ROPE_TYPE_NEOX
+	ROPE_TYPE_MROPE  = 8,  // GGML_ROPE_TYPE_MROPE
+	ROPE_TYPE_IMROPE = 40, // GGML_ROPE_TYPE_IMROPE
+	ROPE_TYPE_VISION = 24, // GGML_ROPE_TYPE_VISION
+}
+
+// enum llama_token_type - implicitly sequential, no gaps.
+enum LlamaTokenType : CInt
+{
+	TOKEN_TYPE_UNDEFINED,
+	TOKEN_TYPE_NORMAL,
+	TOKEN_TYPE_UNKNOWN,
+	TOKEN_TYPE_CONTROL,
+	TOKEN_TYPE_USER_DEFINED,
+	TOKEN_TYPE_UNUSED,
+	TOKEN_TYPE_BYTE,
+}
+
+// enum llama_token_attr - bitflags.
+constdef LlamaTokenAttr : CInt
+{
+	TOKEN_ATTR_UNDEFINED    = 0,
+	TOKEN_ATTR_UNKNOWN      = 1 << 0,
+	TOKEN_ATTR_UNUSED       = 1 << 1,
+	TOKEN_ATTR_NORMAL       = 1 << 2,
+	TOKEN_ATTR_CONTROL      = 1 << 3, // SPECIAL?
+	TOKEN_ATTR_USER_DEFINED = 1 << 4,
+	TOKEN_ATTR_BYTE         = 1 << 5,
+	TOKEN_ATTR_NORMALIZED   = 1 << 6,
+	TOKEN_ATTR_LSTRIP       = 1 << 7,
+	TOKEN_ATTR_RSTRIP       = 1 << 8,
+	TOKEN_ATTR_SINGLE_WORD  = 1 << 9,
+}
+
+// enum llama_ftype - model file / quantization type. Has gaps (removed legacy
+// formats) and a sentinel far outside the sequence (GUESSED = 1024).
+constdef LlamaFtype : CInt
+{
+	FTYPE_ALL_F32          = 0,
+	FTYPE_MOSTLY_F16       = 1,
+	FTYPE_MOSTLY_Q4_0      = 2,
+	FTYPE_MOSTLY_Q4_1      = 3,
+	FTYPE_MOSTLY_Q8_0      = 7,
+	FTYPE_MOSTLY_Q5_0      = 8,
+	FTYPE_MOSTLY_Q5_1      = 9,
+	FTYPE_MOSTLY_Q2_K      = 10,
+	FTYPE_MOSTLY_Q3_K_S    = 11,
+	FTYPE_MOSTLY_Q3_K_M    = 12,
+	FTYPE_MOSTLY_Q3_K_L    = 13,
+	FTYPE_MOSTLY_Q4_K_S    = 14,
+	FTYPE_MOSTLY_Q4_K_M    = 15,
+	FTYPE_MOSTLY_Q5_K_S    = 16,
+	FTYPE_MOSTLY_Q5_K_M    = 17,
+	FTYPE_MOSTLY_Q6_K      = 18,
+	FTYPE_MOSTLY_IQ2_XXS   = 19,
+	FTYPE_MOSTLY_IQ2_XS    = 20,
+	FTYPE_MOSTLY_Q2_K_S    = 21,
+	FTYPE_MOSTLY_IQ3_XS    = 22,
+	FTYPE_MOSTLY_IQ3_XXS   = 23,
+	FTYPE_MOSTLY_IQ1_S     = 24,
+	FTYPE_MOSTLY_IQ4_NL    = 25,
+	FTYPE_MOSTLY_IQ3_S     = 26,
+	FTYPE_MOSTLY_IQ3_M     = 27,
+	FTYPE_MOSTLY_IQ2_S     = 28,
+	FTYPE_MOSTLY_IQ2_M     = 29,
+	FTYPE_MOSTLY_IQ4_XS    = 30,
+	FTYPE_MOSTLY_IQ1_M     = 31,
+	FTYPE_MOSTLY_BF16      = 32,
+	FTYPE_MOSTLY_TQ1_0     = 36,
+	FTYPE_MOSTLY_TQ2_0     = 37,
+	FTYPE_MOSTLY_MXFP4_MOE = 38,
+	FTYPE_MOSTLY_NVFP4     = 39,
+	FTYPE_MOSTLY_Q1_0      = 40,
+	FTYPE_MOSTLY_Q2_0      = 41,
+	FTYPE_MOSTLY_F8_E4M3   = 42,
+	FTYPE_GUESSED          = 1024, // not specified in the model file
+}
+
+// Get the model file type (quantization) as a string, e.g. "Q8_0" or "Q4_K - Medium"
+extern fn ZString ftype_name(LlamaFtype ftype) @cname("llama_ftype_name");
+
+// enum llama_rope_scaling_type - starts at -1 and MAX_VALUE aliases LONGROPE.
+constdef LlamaRopeScalingType : CInt
+{
+	ROPE_SCALING_TYPE_UNSPECIFIED = -1,
+	ROPE_SCALING_TYPE_NONE        = 0,
+	ROPE_SCALING_TYPE_LINEAR      = 1,
+	ROPE_SCALING_TYPE_YARN        = 2,
+	ROPE_SCALING_TYPE_LONGROPE    = 3,
+	ROPE_SCALING_TYPE_MAX_VALUE   = 3, // == ROPE_SCALING_TYPE_LONGROPE
+}
+
+// enum llama_pooling_type - starts at -1.
+constdef LlamaPoolingType : CInt
+{
+	POOLING_TYPE_UNSPECIFIED = -1,
+	POOLING_TYPE_NONE = 0,
+	POOLING_TYPE_MEAN = 1,
+	POOLING_TYPE_CLS  = 2,
+	POOLING_TYPE_LAST = 3,
+	POOLING_TYPE_RANK = 4, // used by reranking models to attach the classification head to the graph
+}
+
+// enum llama_attention_type - starts at -1.
+constdef LlamaAttentionType : CInt
+{
+	ATTENTION_TYPE_UNSPECIFIED = -1,
+	ATTENTION_TYPE_CAUSAL      = 0,
+	ATTENTION_TYPE_NON_CAUSAL  = 1,
+}
+
+// enum llama_flash_attn_type - starts at -1.
+constdef LlamaFlashAttnType : CInt
+{
+	FLASH_ATTN_TYPE_AUTO     = -1,
+	FLASH_ATTN_TYPE_DISABLED = 0,
+	FLASH_ATTN_TYPE_ENABLED  = 1,
+}
+
+extern fn ZString flash_attn_type_name(LlamaFlashAttnType flash_attn_type) @cname("llama_flash_attn_type_name");
+
+// enum llama_split_mode - implicitly sequential, no gaps.
+enum LlamaSplitMode : CInt
+{
+	SPLIT_MODE_NONE,   // single GPU
+	SPLIT_MODE_LAYER,  // split layers and KV across GPUs
+	SPLIT_MODE_ROW,    // split layers and KV across GPUs, use tensor parallelism if supported
+	SPLIT_MODE_TENSOR,
+}
+
+// enum llama_load_mode - starts at -1.
+constdef LlamaLoadMode : CInt
+{
+	LOAD_MODE_AUTO       = -1, // auto-detect based on device capabilities
+	LOAD_MODE_NONE       = 0,  // no special loading mode
+	LOAD_MODE_MMAP       = 1,  // memory map the model
+	LOAD_MODE_MLOCK      = 2,  // force system to keep model in RAM rather than swapping or compressing
+	LOAD_MODE_MMAP_MLOCK = 3,  // mmap + mlock
+	LOAD_MODE_DIRECT_IO  = 4,  // use direct I/O if available
+}
+
+extern fn ZString load_mode_name(LlamaLoadMode load_mode) @cname("llama_load_mode_name");
+extern fn LlamaLoadMode load_mode_from_str(ZString str) @cname("llama_load_mode_from_str");
+
+// enum llama_lazy_mode - implicitly sequential, no gaps.
+enum LlamaLazyMode : CInt
+{
+	LAZY_MODE_OFF,  // always read the whole tensor up front
+	LAZY_MODE_AUTO, // lazy only for marked tensors larger than 4 GiB (requires mmap)
+	LAZY_MODE_ON,   // read the rows of tensors marked by the arch on demand (requires mmap)
+}
+
+// enum llama_context_type - implicitly sequential, no gaps.
+enum LlamaContextType : CInt
+{
+	CONTEXT_TYPE_DEFAULT,
+	CONTEXT_TYPE_MTP,
+}
+
+struct LlamaTokenData
+{
+	LlamaToken id; // token id
+	float logit;   // log-odds of the token
+	float p;       // probability of the token
+}
+
+struct LlamaTokenDataArray
+{
+	LlamaTokenData* data; // NOTE: this pointer can be modified by the samplers
+	usz size;
+	long selected; // index in the data array (i.e. not the token id)
+	bool sorted;   // note: do not assume the data is sorted - always check this flag
+}
+
+// typedef bool (*llama_progress_callback)(float progress, void * user_data);
+alias LlamaProgressCallback = fn bool (float progress, void* user_data);
+
+// Input data for llama_encode/llama_decode.
+// A LlamaBatch object can contain input about one or many sequences. The
+// provided arrays (token, embd, pos, ...) must have size n_tokens.
+//  - token  : token ids of the input (used when embd is null)
+//  - embd   : token embeddings, float vector of size n_embd (used when token is null)
+//  - pos    : position of the respective token in the sequence (null: tracked automatically)
+//  - seq_id : sequence the respective token belongs to (null: assumed to be 0)
+//  - logits : if zero, logits/embeddings for that token are not output
+struct LlamaBatch
+{
+	int n_tokens;
+
+	LlamaToken* token;
+	float* embd;
+	LlamaPos* pos;
+	int* n_seq_id;
+	LlamaSeqId** seq_id;
+	ichar* logits; // int8_t in C (signed) - TODO(upstream): rename this to "output"
+}
+
+// enum llama_model_kv_override_type - implicitly sequential, no gaps.
+enum LlamaModelKvOverrideType : CInt
+{
+	KV_OVERRIDE_TYPE_INT,
+	KV_OVERRIDE_TYPE_FLOAT,
+	KV_OVERRIDE_TYPE_BOOL,
+	KV_OVERRIDE_TYPE_STR,
+}
+
+// enum llama_model_meta_key - implicitly sequential, no gaps.
+enum LlamaModelMetaKey : CInt
+{
+	MODEL_META_KEY_SAMPLING_SEQUENCE,
+	MODEL_META_KEY_SAMPLING_TOP_K,
+	MODEL_META_KEY_SAMPLING_TOP_P,
+	MODEL_META_KEY_SAMPLING_MIN_P,
+	MODEL_META_KEY_SAMPLING_XTC_PROBABILITY,
+	MODEL_META_KEY_SAMPLING_XTC_THRESHOLD,
+	MODEL_META_KEY_SAMPLING_TEMP,
+	MODEL_META_KEY_SAMPLING_PENALTY_LAST_N,
+	MODEL_META_KEY_SAMPLING_PENALTY_REPEAT,
+	MODEL_META_KEY_SAMPLING_MIROSTAT,
+	MODEL_META_KEY_SAMPLING_MIROSTAT_TAU,
+	MODEL_META_KEY_SAMPLING_MIROSTAT_ETA,
+}
+
+// enum llama_process_type - implicitly sequential, no gaps.
+enum LlamaProcessType : CInt
+{
+	PROCESS_TYPE_ENCODE,
+	PROCESS_TYPE_DECODE,
+}
+
+struct LlamaModelKvOverride
+{
+	LlamaModelKvOverrideType tag;
+
+	char[128] key;
+
+	union
+	{
+		long val_i64;
+		double val_f64;
+		bool val_bool;
+		char[128] val_str;
+	}
+}
+
+struct LlamaModelTensorBuftOverride
+{
+	ZString pattern;
+	GgmlBackendBufferType buft;
+}
+
+struct LlamaModelParams
+{
+	// NULL-terminated list of devices to use for offloading (if NULL, all available devices are used)
+	GgmlBackendDev* devices;
+
+	// NULL-terminated list of buffer types to use for tensors that match a pattern
+	LlamaModelTensorBuftOverride* tensor_buft_overrides;
+
+	int n_gpu_layers;             // number of layers to store in VRAM, a negative value means all layers
+	LlamaSplitMode split_mode;    // how to split the model across multiple GPUs
+	LlamaLoadMode load_mode;      // how to load the model
+	LlamaLazyMode lazy_mode;      // on-demand reading of tensors marked by the arch
+
+	// the GPU that is used for the entire model when split_mode is SPLIT_MODE_NONE
+	int main_gpu;
+
+	// proportion of the model (layers or rows) to offload to each GPU, size: max_devices()
+	float* tensor_split;
+
+	// Called with a progress value between 0.0 and 1.0. Pass NULL to disable.
+	// If the provided progress_callback returns true, model loading continues.
+	// If it returns false, model loading is immediately aborted.
+	LlamaProgressCallback progress_callback;
+
+	// context pointer passed to the progress callback
+	void* progress_callback_user_data;
+
+	// override key-value pairs of the model meta data
+	LlamaModelKvOverride* kv_overrides;
+
+	// Keep the booleans together to avoid misalignment during copy-by-value.
+	bool vocab_only;      // only load the vocabulary, no weights
+	bool check_tensors;   // validate model tensor data
+	bool use_extra_bufts; // use extra buffer types (used for weight repacking)
+	bool no_host;         // bypass host buffer allowing extra buffers to be used
+	bool no_alloc;        // only load metadata and simulate memory allocations
+	bool load_mtp;        // whether to load MTP layers
+}
+
+struct LlamaSamplerSeqConfig
+{
+	LlamaSeqId seq_id;
+	LlamaSampler* sampler;
+}
+
+// NOTE: changing the default values of parameters marked as [EXPERIMENTAL] may
+// cause crashes or incorrect results in certain configurations.
+// ref: https://github.com/ggml-org/llama.cpp/pull/7544
+struct LlamaContextParams
+{
+	uint n_ctx;                 // text context, 0 = from model
+	uint n_batch;                // logical maximum batch size that can be submitted to decode()
+	uint n_ubatch;               // physical maximum batch size
+	uint n_seq_max;              // max number of sequences (i.e. distinct states for recurrent models)
+	uint n_rs_seq;               // number of recurrent-state snapshots per seq for rollback (0 = no rollback) [EXPERIMENTAL]
+	uint n_outputs_max;          // max outputs in a ubatch (0 = n_batch)
+	uint n_outputs_max_per_seq;  // max outputs per sequence (0 = n_outputs_max)
+	int n_threads;               // number of threads to use for generation
+	int n_threads_batch;         // number of threads to use for batch processing
+
+	LlamaContextType ctx_type;             // set the context type (e.g. MTP)
+	LlamaRopeScalingType rope_scaling_type; // RoPE scaling type
+	LlamaPoolingType pooling_type;          // whether to pool (sum) embedding results by sequence id
+	LlamaAttentionType attention_type;      // attention type to use for embeddings
+	LlamaFlashAttnType flash_attn_type;     // when to enable Flash Attention
+
+	// ref: https://github.com/ggml-org/llama.cpp/pull/2054
+	float rope_freq_base;    // RoPE base frequency, 0 = from model
+	float rope_freq_scale;   // RoPE frequency scaling factor, 0 = from model
+	float yarn_ext_factor;   // YaRN extrapolation mix factor, negative = from model
+	float yarn_attn_factor;  // YaRN magnitude scaling factor
+	float yarn_beta_fast;    // YaRN low correction dim
+	float yarn_beta_slow;    // YaRN high correction dim
+	uint yarn_orig_ctx;      // YaRN original context size
+	float defrag_thold;      // [DEPRECATED] defragment the KV cache if holes/size > thold, <= 0 disabled (default)
+
+	GgmlBackendSchedEvalCallback cb_eval;
+	void* cb_eval_user_data;
+
+	GgmlType type_k; // data type for K cache [EXPERIMENTAL]
+	GgmlType type_v; // data type for V cache [EXPERIMENTAL]
+
+	usz moe_cache_size;        // device cache in bytes for experts kept in host memory, 0 = disabled [EXPERIMENTAL]
+	float moe_cache_cpu_share; // share of the MoE cache misses computed on the CPU instead of uploaded [EXPERIMENTAL]
+
+	// Abort callback. If it returns true, execution of decode() will be aborted.
+	// Currently works only with CPU execution.
+	GgmlAbortCallback abort_callback;
+	void* abort_callback_data;
+
+	// Keep the booleans together and at the end of the struct to avoid misalignment during copy-by-value.
+	bool embeddings;  // if true, extract embeddings (together with logits, except for pooling type other than NONE)
+	bool offload_kqv; // offload the KQV ops (including the KV cache) to GPU
+	bool no_perf;     // measure performance timings
+	bool op_offload;  // offload host tensor operations to device
+	bool swa_full;    // use full-size SWA cache
+	bool kv_unified;  // use a unified buffer across the input sequences when computing the attention
+
+	// [EXPERIMENTAL] backend sampler chain configuration (caller keeps the sampler chains alive;
+	// the samplers must be sampler chains, i.e. created via sampler_chain_init)
+	LlamaSamplerSeqConfig* samplers;
+	usz n_samplers;
+
+	// a source/target/parent context; can be used to share results or memory between 2 contexts
+	LlamaContext* ctx_other;
+}
+
+struct LlamaModelTensorOverride
+{
+	ZString pattern;
+	GgmlType type;
+}
+
+struct LlamaModelImatrixData
+{
+	ZString name;
+	float* data;
+	usz size;
+}
+
+// model quantization parameters
+struct LlamaModelQuantizeParams
+{
+	int nthread;                             // number of threads to use for quantizing, <=0 uses hardware_concurrency()
+	LlamaFtype ftype;                        // quantize to this LlamaFtype
+	GgmlType output_tensor_type;             // output tensor type
+	GgmlType token_embedding_type;           // token embeddings tensor type
+	bool allow_requantize;                   // allow quantizing non-f32/f16 tensors
+	bool quantize_output_tensor;              // quantize output.weight
+	bool only_copy;                          // only copy tensors - ftype, allow_requantize, quantize_output_tensor ignored
+	bool pure;                                // quantize all tensors to the default type
+	bool keep_split;                          // quantize to the same number of shards
+	bool dry_run;                             // calculate and show the final quantization size without quantizing
+	LlamaModelImatrixData* imatrix;            // pointer to importance matrix data
+	LlamaModelKvOverride* kv_overrides;        // pointer to kv overrides
+	LlamaModelTensorOverride* tt_overrides;    // pointer to tensor overrides
+	int* prune_layers;                         // pointer to layer indices to prune
+	usz max_buf_size;                          // max bytes of tensor rows kept in memory at once, 0 = default (8 GiB)
+}
+
+struct LlamaLogitBias
+{
+	LlamaToken token;
+	float bias;
+}
+
+struct LlamaSamplerChainParams
+{
+	bool no_perf; // whether to measure performance timings
+}
+
+// used in chat template
+struct LlamaChatMessage
+{
+	ZString role;
+	ZString content;
+}
+
+extern fn ZString version() @cname("llama_version");
+
+// Helpers for getting default parameters.
+extern fn LlamaModelParams model_default_params() @cname("llama_model_default_params");
+extern fn LlamaContextParams context_default_params() @cname("llama_context_default_params");
+extern fn LlamaSamplerChainParams sampler_chain_default_params() @cname("llama_sampler_chain_default_params");
+extern fn LlamaModelQuantizeParams model_quantize_default_params() @cname("llama_model_quantize_default_params");
+
+// Initialize the llama + ggml backend. Call once at the start of the program.
+extern fn void backend_init() @cname("llama_backend_init");
+
+// Call once at the end of the program - currently only used for MPI.
+extern fn void backend_free() @cname("llama_backend_free");
+
+// Optional: enable numa optimizations.
+extern fn void numa_init(GgmlNumaStrategy numa) @cname("llama_numa_init");
+
+// Optional: an auto threadpool gets created in ggml if not passed explicitly.
+extern fn void attach_threadpool(LlamaContext* ctx, GgmlThreadpool threadpool, GgmlThreadpool threadpool_batch) @cname("llama_attach_threadpool");
+extern fn void detach_threadpool(LlamaContext* ctx) @cname("llama_detach_threadpool");
+
+// typedef void (*llama_model_set_tensor_data_t)(struct ggml_tensor * tensor, void * userdata);
+alias LlamaModelSetTensorDataFn = fn void (GgmlTensor* tensor, void* userdata);

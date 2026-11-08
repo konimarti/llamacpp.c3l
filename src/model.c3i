@@ -1,0 +1,391 @@
+// model.c3i
+// Model loading/lifecycle, context lifecycle & getters, model & vocab
+// introspection/metadata getters, LoRA adapters, control vectors, and the
+// Memory section (llama_memory_*) ending at llama_memory_can_shift.
+//
+// Source: include/llama.h (see ../reference/llama.h), lines 510-825 of
+// https://github.com/ggml-org/llama.cpp
+module llama;
+
+import libc;
+
+// Forward-declared opaque handle for GGUF metadata context from ggml/gguf
+typedef GgufContext = void;
+
+// Create a new model from GGUF metadata as well as a function to set the tensor data
+//   - tensors are created as GGML_TYPE_F32 by default,
+//     override by adding a tensor with the same name but a different name to the context
+extern fn LlamaModel* model_init_from_user(
+	GgufContext* metadata,
+	LlamaModelSetTensorDataFn set_tensor_data,
+	void* set_tensor_data_ud,
+	LlamaModelParams params
+) @cname("llama_model_init_from_user");
+
+extern fn LlamaModel* load_model_from_file(
+	ZString path_model,
+	LlamaModelParams params
+) @cname("llama_load_model_from_file") @deprecated("use llama_model_load_from_file instead");
+
+// Load a model from a file
+// If the file is split into multiple parts, the file name must follow this pattern: <name>-%05d-of-%05d.gguf
+// If the split file name does not follow this pattern, use llama_model_load_from_splits
+extern fn LlamaModel* model_load_from_file(
+	ZString path_model,
+	LlamaModelParams params
+) @cname("llama_model_load_from_file");
+
+// Load a model from an open FILE pointer
+// The GGUF is read from the current position, so it can be embedded in a larger file
+// mmap needs the GGUF data section at a file offset to be aligned to the CPU tensor alignment (32 bytes)
+extern fn LlamaModel* model_load_from_file_ptr(
+	libc::CFile file,
+	LlamaModelParams params
+) @cname("llama_model_load_from_file_ptr");
+
+// Load a model from multiple splits (support custom naming scheme)
+// The paths must be in the correct order
+extern fn LlamaModel* model_load_from_splits(
+	ZString* paths,
+	usz n_paths,
+	LlamaModelParams params
+) @cname("llama_model_load_from_splits");
+
+extern fn void model_save_to_file(
+	LlamaModel* model,
+	ZString path_model
+) @cname("llama_model_save_to_file");
+
+extern fn void free_model(
+	LlamaModel* model
+) @cname("llama_free_model") @deprecated("use llama_model_free instead");
+
+extern fn void model_free(
+	LlamaModel* model
+) @cname("llama_model_free");
+
+extern fn LlamaContext* init_from_model(
+	LlamaModel* model,
+	LlamaContextParams params
+) @cname("llama_init_from_model");
+
+extern fn LlamaContext* new_context_with_model(
+	LlamaModel* model,
+	LlamaContextParams params
+) @cname("llama_new_context_with_model") @deprecated("use llama_init_from_model instead");
+
+// Frees all allocated memory
+// NOTE: this module-level `free` shadows `libc::free` for any code inside
+// module llama (there is none here, but a future helper file in this module
+// that needs the real libc free() must call it as `libc::free(...)`).
+extern fn void free(LlamaContext* ctx) @cname("llama_free");
+
+extern fn long time_us() @cname("llama_time_us");
+
+extern fn usz max_devices() @cname("llama_max_devices");
+extern fn usz max_parallel_sequences() @cname("llama_max_parallel_sequences");
+extern fn usz max_tensor_buft_overrides() @cname("llama_max_tensor_buft_overrides");
+
+extern fn bool supports_mmap() @cname("llama_supports_mmap");
+extern fn bool supports_mlock() @cname("llama_supports_mlock");
+extern fn bool supports_gpu_offload() @cname("llama_supports_gpu_offload");
+extern fn bool supports_rpc() @cname("llama_supports_rpc");
+
+// NOTE: After creating a llama_context, it is recommended to query the actual values using these functions
+//       In some cases the requested values via llama_context_params may differ from the actual values used by the context
+//       ref: https://github.com/ggml-org/llama.cpp/pull/17046#discussion_r2503085732
+extern fn uint n_ctx(LlamaContext* ctx) @cname("llama_n_ctx");
+extern fn uint n_ctx_seq(LlamaContext* ctx) @cname("llama_n_ctx_seq");
+extern fn uint n_batch(LlamaContext* ctx) @cname("llama_n_batch");
+extern fn uint n_ubatch(LlamaContext* ctx) @cname("llama_n_ubatch");
+extern fn uint n_seq_max(LlamaContext* ctx) @cname("llama_n_seq_max");
+extern fn uint n_rs_seq(LlamaContext* ctx) @cname("llama_n_rs_seq");
+
+extern fn int n_ctx_train(LlamaModel* model) @cname("llama_n_ctx_train") @deprecated("use llama_model_n_ctx_train instead");
+extern fn int n_embd(LlamaModel* model) @cname("llama_n_embd") @deprecated("use llama_model_n_embd instead");
+extern fn int n_layer(LlamaModel* model) @cname("llama_n_layer") @deprecated("use llama_model_n_layer instead");
+extern fn int n_head(LlamaModel* model) @cname("llama_n_head") @deprecated("use llama_model_n_head instead");
+
+extern fn int n_vocab(LlamaVocab* vocab) @cname("llama_n_vocab") @deprecated("use llama_vocab_n_tokens instead");
+
+extern fn LlamaModel* get_model(LlamaContext* ctx) @cname("llama_get_model");
+extern fn LlamaMemory get_memory(LlamaContext* ctx) @cname("llama_get_memory");
+// TODO: rename to llama_get_pooling_type
+extern fn LlamaPoolingType pooling_type(LlamaContext* ctx) @cname("llama_pooling_type");
+
+extern fn LlamaVocab* model_get_vocab(LlamaModel* model) @cname("llama_model_get_vocab");
+extern fn LlamaRopeType model_rope_type(LlamaModel* model) @cname("llama_model_rope_type");
+
+extern fn int model_n_ctx_train(LlamaModel* model) @cname("llama_model_n_ctx_train");
+extern fn int model_n_embd(LlamaModel* model) @cname("llama_model_n_embd");
+extern fn int model_n_embd_inp(LlamaModel* model) @cname("llama_model_n_embd_inp");
+extern fn int model_n_embd_out(LlamaModel* model) @cname("llama_model_n_embd_out");
+extern fn int model_n_layer(LlamaModel* model) @cname("llama_model_n_layer");
+extern fn int model_n_layer_nextn(LlamaModel* model) @cname("llama_model_n_layer_nextn");
+extern fn int model_n_head(LlamaModel* model) @cname("llama_model_n_head");
+extern fn int model_n_head_kv(LlamaModel* model) @cname("llama_model_n_head_kv");
+extern fn int model_n_swa(LlamaModel* model) @cname("llama_model_n_swa");
+
+// Get the model's RoPE frequency scaling factor
+extern fn float model_rope_freq_scale_train(LlamaModel* model) @cname("llama_model_rope_freq_scale_train");
+
+// Returns the number of classifier outputs (only valid for classifier models)
+// Undefined behavior for non-classifier models
+extern fn uint model_n_cls_out(LlamaModel* model) @cname("llama_model_n_cls_out");
+
+// Returns label of classifier output by index (<n_cls_out). Returns nullptr if no label provided
+extern fn ZString model_cls_label(LlamaModel* model, uint i) @cname("llama_model_cls_label");
+
+extern fn LlamaVocabType vocab_type(LlamaVocab* vocab) @cname("llama_vocab_type");
+
+extern fn int vocab_n_tokens(LlamaVocab* vocab) @cname("llama_vocab_n_tokens");
+
+// Functions to access the model's GGUF metadata scalar values
+// - The functions return the length of the string on success, or -1 on failure
+// - The output string is always null-terminated and cleared on failure
+// - When retrieving a string, an extra byte must be allocated to account for the null terminator
+// - GGUF array values are not supported by these functions
+
+// Get metadata value as a string by key name
+extern fn int model_meta_val_str(
+	LlamaModel* model,
+	ZString key,
+	char* buf,
+	usz buf_size
+) @cname("llama_model_meta_val_str");
+
+// Get the number of metadata key/value pairs
+extern fn int model_meta_count(LlamaModel* model) @cname("llama_model_meta_count");
+
+// Get sampling metadata key name. Returns nullptr if the key is invalid
+extern fn ZString model_meta_key_str(LlamaModelMetaKey key) @cname("llama_model_meta_key_str");
+
+// Get metadata key name by index
+extern fn int model_meta_key_by_index(
+	LlamaModel* model,
+	int i,
+	char* buf,
+	usz buf_size
+) @cname("llama_model_meta_key_by_index");
+
+// Get metadata value as a string by index
+extern fn int model_meta_val_str_by_index(
+	LlamaModel* model,
+	int i,
+	char* buf,
+	usz buf_size
+) @cname("llama_model_meta_val_str_by_index");
+
+// Get a string describing the model type
+extern fn int model_desc(
+	LlamaModel* model,
+	char* buf,
+	usz buf_size
+) @cname("llama_model_desc");
+
+// Get the model file type (quantization), e.g. LLAMA_FTYPE_MOSTLY_Q8_0
+extern fn LlamaFtype model_ftype(LlamaModel* model) @cname("llama_model_ftype");
+
+// Returns the total size of all the tensors in the model in bytes
+extern fn ulong model_size(LlamaModel* model) @cname("llama_model_size");
+
+// Get the default chat template. Returns nullptr if not available
+// If name is NULL, returns the default chat template
+extern fn ZString model_chat_template(
+	LlamaModel* model,
+	ZString name
+) @cname("llama_model_chat_template");
+
+// Returns the total number of parameters in the model
+extern fn ulong model_n_params(LlamaModel* model) @cname("llama_model_n_params");
+
+// Returns true if the model contains an encoder that requires llama_encode() call
+extern fn bool model_has_encoder(LlamaModel* model) @cname("llama_model_has_encoder");
+
+// Returns true if the model contains a decoder that requires llama_decode() call
+extern fn bool model_has_decoder(LlamaModel* model) @cname("llama_model_has_decoder");
+
+// For encoder-decoder models, this function returns id of the token that must be provided
+// to the decoder to start generating output sequence. For other models, it returns -1.
+extern fn LlamaToken model_decoder_start_token(LlamaModel* model) @cname("llama_model_decoder_start_token");
+
+// Returns true if the model is recurrent (like Mamba, RWKV, etc.)
+extern fn bool model_is_recurrent(LlamaModel* model) @cname("llama_model_is_recurrent");
+
+// Returns true if the model is hybrid (like Jamba, Granite, etc.)
+extern fn bool model_is_hybrid(LlamaModel* model) @cname("llama_model_is_hybrid");
+
+// Returns true if the model is diffusion-based (like LLaDA, Dream, etc.)
+extern fn bool model_is_diffusion(LlamaModel* model) @cname("llama_model_is_diffusion");
+
+// Returns 0 on success
+extern fn uint model_quantize(
+	ZString fname_inp,
+	ZString fname_out,
+	LlamaModelQuantizeParams* params
+) @cname("llama_model_quantize");
+
+//
+// Adapters
+//
+
+// Load a LoRA adapter from file
+// The adapter is valid as long as the associated model is not freed
+extern fn LlamaAdapterLora* adapter_lora_init(
+	LlamaModel* model,
+	ZString path_lora
+) @cname("llama_adapter_lora_init");
+
+// Load a LoRA adapter from an open FILE pointer, reading from its current position
+extern fn LlamaAdapterLora* adapter_lora_init_from_file_ptr(
+	LlamaModel* model,
+	libc::CFile file
+) @cname("llama_adapter_lora_init_from_file_ptr");
+
+// Functions to access the adapter's GGUF metadata scalar values
+// - The functions return the length of the string on success, or -1 on failure
+// - The output string is always null-terminated and cleared on failure
+// - When retrieving a string, an extra byte must be allocated to account for the null terminator
+// - GGUF array values are not supported by these functions
+
+// Get metadata value as a string by key name
+extern fn int adapter_meta_val_str(
+	LlamaAdapterLora* adapter,
+	ZString key,
+	char* buf,
+	usz buf_size
+) @cname("llama_adapter_meta_val_str");
+
+// Get the number of metadata key/value pairs
+extern fn int adapter_meta_count(LlamaAdapterLora* adapter) @cname("llama_adapter_meta_count");
+
+// Get metadata key name by index
+extern fn int adapter_meta_key_by_index(
+	LlamaAdapterLora* adapter,
+	int i,
+	char* buf,
+	usz buf_size
+) @cname("llama_adapter_meta_key_by_index");
+
+// Get metadata value as a string by index
+extern fn int adapter_meta_val_str_by_index(
+	LlamaAdapterLora* adapter,
+	int i,
+	char* buf,
+	usz buf_size
+) @cname("llama_adapter_meta_val_str_by_index");
+
+// Manually free a LoRA adapter
+// NOTE: loaded adapters that are not manually freed will be freed when the associated model is deleted
+extern fn void adapter_lora_free(LlamaAdapterLora* adapter) @cname("llama_adapter_lora_free");
+
+// Get the invocation tokens if the current lora is an alora
+extern fn ulong adapter_get_alora_n_invocation_tokens(LlamaAdapterLora* adapter) @cname("llama_adapter_get_alora_n_invocation_tokens");
+extern fn LlamaToken* adapter_get_alora_invocation_tokens(LlamaAdapterLora* adapter) @cname("llama_adapter_get_alora_invocation_tokens");
+
+// The following functions operate on a llama_context, hence the naming: llama_verb_...
+
+// Set LoRa adapters on the context. Will only modify if the adapters currently in context are different.
+extern fn int set_adapters_lora(
+	LlamaContext* ctx,
+	LlamaAdapterLora** adapters,
+	usz n_adapters,
+	float* scales
+) @cname("llama_set_adapters_lora");
+
+// Apply a loaded control vector to a llama_context, or if data is NULL, clear
+// the currently loaded vector.
+// n_embd should be the size of a single layer's control, and data should point
+// to an n_embd x n_layers buffer starting from layer 1.
+// il_start and il_end are the layer range the vector should apply to (both inclusive)
+// See llama_control_vector_load in common to load a control vector.
+extern fn int set_adapter_cvec(
+	LlamaContext* ctx,
+	float* data,
+	usz len,
+	int n_embd,
+	int il_start,
+	int il_end
+) @cname("llama_set_adapter_cvec");
+
+//
+// Memory
+//
+
+// Clear the memory contents
+// If data == true, the data buffers will also be cleared together with the metadata
+extern fn void memory_clear(
+	LlamaMemory mem,
+	bool data
+) @cname("llama_memory_clear");
+
+// Removes all tokens that belong to the specified sequence and have positions in [p0, p1)
+// Returns false if a partial sequence cannot be removed. Removing a whole sequence never fails
+// seq_id < 0 : match any sequence [TAG_LLAMA_SEQ_ID_NEG]
+// p0 < 0     : [0,  p1]
+// p1 < 0     : [p0, inf)
+extern fn bool memory_seq_rm(
+	LlamaMemory mem,
+	LlamaSeqId seq_id,
+	LlamaPos p0,
+	LlamaPos p1
+) @cname("llama_memory_seq_rm");
+
+// Copy all tokens that belong to the specified sequence to another sequence
+// p0 < 0 : [0,  p1]
+// p1 < 0 : [p0, inf)
+extern fn void memory_seq_cp(
+	LlamaMemory mem,
+	LlamaSeqId seq_id_src,
+	LlamaSeqId seq_id_dst,
+	LlamaPos p0,
+	LlamaPos p1
+) @cname("llama_memory_seq_cp");
+
+// Removes all tokens that do not belong to the specified sequence
+extern fn void memory_seq_keep(
+	LlamaMemory mem,
+	LlamaSeqId seq_id
+) @cname("llama_memory_seq_keep");
+
+// Adds relative position "delta" to all tokens that belong to the specified sequence and have positions in [p0, p1)
+// p0 < 0 : [0,  p1]
+// p1 < 0 : [p0, inf)
+extern fn void memory_seq_add(
+	LlamaMemory mem,
+	LlamaSeqId seq_id,
+	LlamaPos p0,
+	LlamaPos p1,
+	LlamaPos delta
+) @cname("llama_memory_seq_add");
+
+// Integer division of the positions by factor of `d > 1`
+// p0 < 0 : [0,  p1]
+// p1 < 0 : [p0, inf)
+extern fn void memory_seq_div(
+	LlamaMemory mem,
+	LlamaSeqId seq_id,
+	LlamaPos p0,
+	LlamaPos p1,
+	int d
+) @cname("llama_memory_seq_div");
+
+// Returns the smallest position present in the memory for the specified sequence
+// This is typically non-zero only for SWA caches
+// Note that all positions in the range [pos_min, pos_max] are guaranteed to be present in the memory
+// Return -1 if the sequence is empty
+extern fn LlamaPos memory_seq_pos_min(
+	LlamaMemory mem,
+	LlamaSeqId seq_id
+) @cname("llama_memory_seq_pos_min");
+
+// Returns the largest position present in the memory for the specified sequence
+// Note that all positions in the range [pos_min, pos_max] are guaranteed to be present in the memory
+// Return -1 if the sequence is empty
+extern fn LlamaPos memory_seq_pos_max(
+	LlamaMemory mem,
+	LlamaSeqId seq_id
+) @cname("llama_memory_seq_pos_max");
+
+// Check if the memory supports shifting
+extern fn bool memory_can_shift(LlamaMemory mem) @cname("llama_memory_can_shift");

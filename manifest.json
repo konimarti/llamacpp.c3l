@@ -1,0 +1,21 @@
+{
+	"provides": "llama",
+	"sources": [ "src/**" ],
+	"targets": {
+		"linux-x64": {
+			"linked-libraries": [ "llama", "ggml", "ggml-base", "ggml-cpu" ]
+		},
+		"linux-aarch64": {
+			"linked-libraries": [ "llama", "ggml", "ggml-base", "ggml-cpu" ]
+		},
+		"macos-x64": {
+			"linked-libraries": [ "llama", "ggml", "ggml-base", "ggml-cpu" ]
+		},
+		"macos-aarch64": {
+			"linked-libraries": [ "llama", "ggml", "ggml-base", "ggml-cpu" ]
+		},
+		"windows-x64": {
+			"linked-libraries": [ "llama", "ggml", "ggml-base", "ggml-cpu" ]
+		}
+	}
+}

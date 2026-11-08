@@ -1,0 +1,160 @@
+// ggml_shim.c3i
+// Minimal C3 declarations for the small slice of ggml's public API that
+// leaks into llama.h's function signatures and structs. This is NOT a
+// binding for ggml itself (ggml.h is a ~3000 line tensor-op library) - it
+// only covers the opaque handles, enums, and callback types that llama.h
+// requires to type-check. Do not add ggml tensor-op functions here.
+//
+// Source: ggml/include/ggml.h, ggml-backend.h, ggml-cpu.h, ggml-opt.h
+// from https://github.com/ggml-org/llama.cpp (see ../reference/*.h)
+module llama;
+
+// --- opaque handles (incomplete C structs, always used as T*) ---
+
+typedef GgmlContext = void;
+typedef GgmlCgraph = void;
+typedef GgmlTensor = void;
+
+// --- opaque handles (C typedefs a pointer directly: `typedef struct X * X_t`) ---
+
+alias GgmlBackendBufferType = void*;
+alias GgmlBackendDev = void*;
+alias GgmlBackendSched = void*;
+alias GgmlThreadpool = void*;
+alias GgmlOptDataset = void*;
+alias GgmlOptResult = void*;
+alias GgmlOptContext = void*;
+
+// enum ggml_type (ggml.h) - tensor element type / quantization format.
+// Has gaps (removed legacy formats), so modeled as constdef, not enum.
+constdef GgmlType : CInt
+{
+	TYPE_F32     = 0,
+	TYPE_F16     = 1,
+	TYPE_Q4_0    = 2,
+	TYPE_Q4_1    = 3,
+	TYPE_Q5_0    = 6,
+	TYPE_Q5_1    = 7,
+	TYPE_Q8_0    = 8,
+	TYPE_Q8_1    = 9,
+	TYPE_Q2_K    = 10,
+	TYPE_Q3_K    = 11,
+	TYPE_Q4_K    = 12,
+	TYPE_Q5_K    = 13,
+	TYPE_Q6_K    = 14,
+	TYPE_Q8_K    = 15,
+	TYPE_IQ2_XXS = 16,
+	TYPE_IQ2_XS  = 17,
+	TYPE_IQ3_XXS = 18,
+	TYPE_IQ1_S   = 19,
+	TYPE_IQ4_NL  = 20,
+	TYPE_IQ3_S   = 21,
+	TYPE_IQ2_S   = 22,
+	TYPE_IQ4_XS  = 23,
+	TYPE_I8      = 24,
+	TYPE_I16     = 25,
+	TYPE_I32     = 26,
+	TYPE_I64     = 27,
+	TYPE_F64     = 28,
+	TYPE_IQ1_M   = 29,
+	TYPE_BF16    = 30,
+	TYPE_TQ1_0   = 34,
+	TYPE_TQ2_0   = 35,
+	TYPE_MXFP4   = 39,
+	TYPE_NVFP4   = 40,
+	TYPE_Q1_0    = 41,
+	TYPE_Q2_0    = 42,
+	TYPE_F8_E4M3 = 43,
+	TYPE_COUNT   = 44,
+}
+
+// enum ggml_numa_strategy (ggml-cpu.h)
+enum GgmlNumaStrategy : CInt
+{
+	NUMA_STRATEGY_DISABLED,
+	NUMA_STRATEGY_DISTRIBUTE,
+	NUMA_STRATEGY_ISOLATE,
+	NUMA_STRATEGY_NUMACTL,
+	NUMA_STRATEGY_MIRROR,
+	NUMA_STRATEGY_COUNT,
+}
+
+// enum ggml_log_level (ggml.h) - referenced by ggml_log_callback.
+enum GgmlLogLevel : CInt
+{
+	LOG_LEVEL_NONE,
+	LOG_LEVEL_DEBUG,
+	LOG_LEVEL_INFO,
+	LOG_LEVEL_WARN,
+	LOG_LEVEL_ERROR,
+	LOG_LEVEL_CONT,
+}
+
+// enum ggml_opt_optimizer_type (ggml-opt.h)
+enum GgmlOptOptimizerType : CInt
+{
+	OPT_OPTIMIZER_TYPE_ADAMW,
+	OPT_OPTIMIZER_TYPE_SGD,
+	OPT_OPTIMIZER_TYPE_COUNT,
+}
+
+// struct ggml_opt_optimizer_params (ggml-opt.h)
+struct GgmlOptOptimizerParams
+{
+	struct adamw
+	{
+		float alpha; // learning rate
+		float beta1; // first AdamW momentum
+		float beta2; // second AdamW momentum
+		float eps;   // epsilon for numerical stability
+		float wd;    // weight decay - 0.0f to disable
+	}
+	struct sgd
+	{
+		float alpha; // learning rate
+		float wd;    // weight decay
+	}
+}
+
+// --- callback typedefs that appear in llama.h signatures ---
+
+// typedef bool (*ggml_abort_callback)(void * data);
+alias GgmlAbortCallback = fn bool (void* data);
+
+// typedef void (*ggml_log_callback)(enum ggml_log_level level, const char * text, void * user_data);
+alias GgmlLogCallback = fn void (GgmlLogLevel level, ZString text, void* user_data);
+
+// typedef bool (*ggml_backend_sched_eval_callback)(struct ggml_tensor * t, bool ask, void * user_data);
+alias GgmlBackendSchedEvalCallback = fn bool (GgmlTensor* t, bool ask, void* user_data);
+
+// typedef struct ggml_opt_optimizer_params (*ggml_opt_get_optimizer_params)(void * userdata);
+alias GgmlOptGetOptimizerParams = fn GgmlOptOptimizerParams (void* userdata);
+
+// signature for a callback while evaluating opt_ctx on dataset, called after an evaluation
+alias GgmlOptEpochCallback = fn void (
+	bool train,
+	GgmlOptContext opt_ctx,
+	GgmlOptDataset dataset,
+	GgmlOptResult result,
+	long ibatch,
+	long ibatch_max,
+	long t_start_us
+);
+
+// --- minimal dataset/result lifecycle (ggml-opt.h) ---
+// llama_opt_epoch (sampler_init.c3i) takes a GgmlOptDataset/GgmlOptResult by
+// handle but has no way to construct or free one on its own - these four
+// functions are the smallest slice of ggml-opt.h needed to actually use it.
+
+extern fn GgmlOptDataset opt_dataset_init(
+	GgmlType type_data,
+	GgmlType type_label,
+	long ne_datapoint,
+	long ne_label,
+	long ndata,
+	long ndata_shard
+) @cname("ggml_opt_dataset_init");
+extern fn void opt_dataset_free(GgmlOptDataset dataset) @cname("ggml_opt_dataset_free");
+
+extern fn GgmlOptResult opt_result_init() @cname("ggml_opt_result_init");
+extern fn void opt_result_free(GgmlOptResult result) @cname("ggml_opt_result_free");

@@ -1,0 +1,16 @@
+{
+	"authors": [ "Koni Marti <koni.marti@gmail.com>" ],
+	"version": "0.1.0",
+	"output": "build",
+	"sources": [ "src/**" ],
+	"targets": {
+		"llama": {
+			"type": "static-lib"
+		},
+		"generate": {
+			"type": "executable",
+			"sources": [ "src/**", "example/generate.c3" ],
+			"linked-libraries": [ "llama", "ggml", "ggml-base", "ggml-cpu" ]
+		}
+	}
+}

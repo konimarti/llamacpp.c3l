@@ -1,0 +1,315 @@
+// sampler_init.c3i
+// Sampling API: the generic sampler/chain functions, the whole
+// llama_sampler_init_<algorithm> constructor family, the Model split path
+// helpers, system info / logging callbacks, the Performance utils
+// (llama_perf_*) and the training API (llama_opt_*) - the last section of
+// llama.h.
+//
+// Source: include/llama.h (see ../reference/llama.h), lines 1442-1752 of
+// https://github.com/ggml-org/llama.cpp
+module llama;
+
+// maximum number of distinct DRY sequence breakers, duplicates not counted
+// (llama.h: #define LLAMA_DRY_MAX_SEQ_BREAKERS 64)
+const int DRY_MAX_SEQ_BREAKERS = 64;
+
+// typedef void * llama_sampler_context_t;
+alias LlamaSamplerContext = void*;
+
+// LlamaSamplerI (the real llama_sampler_i vtable struct) is defined in
+// vocab_sampling.c3i (reference/llama.h lines 1386-1428) - both files share
+// module llama.
+
+// --- generic sampler functions (mirror of llama_sampler_i) ---
+
+// mirror of llama_sampler_i:
+extern fn LlamaSampler* sampler_init(LlamaSamplerI* iface, LlamaSamplerContext ctx) @cname("llama_sampler_init");
+
+extern fn ZString sampler_name(LlamaSampler* smpl) @cname("llama_sampler_name");
+extern fn void sampler_accept(LlamaSampler* smpl, LlamaToken token) @cname("llama_sampler_accept");
+extern fn void sampler_apply(LlamaSampler* smpl, LlamaTokenDataArray* cur_p) @cname("llama_sampler_apply");
+extern fn void sampler_reset(LlamaSampler* smpl) @cname("llama_sampler_reset");
+extern fn LlamaSampler* sampler_clone(LlamaSampler* smpl) @cname("llama_sampler_clone");
+extern fn void sampler_copy(LlamaSampler* src, LlamaSampler* dst) @cname("llama_sampler_copy");
+// important: do not free if the sampler has been added to a llama_sampler_chain (via llama_sampler_chain_add)
+extern fn void sampler_free(LlamaSampler* smpl) @cname("llama_sampler_free");
+
+// --- llama_sampler_chain ---
+// a type of llama_sampler that can chain multiple samplers one after another
+
+extern fn LlamaSampler* sampler_chain_init(LlamaSamplerChainParams params) @cname("llama_sampler_chain_init");
+
+// important: takes ownership of the sampler object and will free it when llama_sampler_free is called
+extern fn void sampler_chain_add(LlamaSampler* chain, LlamaSampler* smpl) @cname("llama_sampler_chain_add");
+
+// return NULL if:
+//   - the sampler is NULL
+//   - the sampler is not a llama_sampler_chain
+//   - the index is out of bounds, unless i == -1
+//   - if i == -1, returns the chain itself (can be used to check if the sampler is a chain)
+extern fn LlamaSampler* sampler_chain_get(LlamaSampler* chain, int i) @cname("llama_sampler_chain_get");
+
+// the total number of samplers in the chain
+extern fn int sampler_chain_n(LlamaSampler* chain) @cname("llama_sampler_chain_n");
+
+// after removing a sampler, the chain will no longer own it, and it will not be freed when the chain is freed
+extern fn LlamaSampler* sampler_chain_remove(LlamaSampler* chain, int i) @cname("llama_sampler_chain_remove");
+
+// --- available samplers: llama_sampler_init_<algorithm> ---
+
+extern fn LlamaSampler* sampler_init_greedy() @cname("llama_sampler_init_greedy");
+
+// seed == LLAMA_DEFAULT_SEED to use a random seed.
+extern fn LlamaSampler* sampler_init_dist(uint seed) @cname("llama_sampler_init_dist");
+
+// Top-K sampling described in academic paper "The Curious Case of Neural Text Degeneration" https://arxiv.org/abs/1904.09751
+// Setting k <= 0 makes this a noop
+extern fn LlamaSampler* sampler_init_top_k(int k) @cname("llama_sampler_init_top_k");
+
+// Nucleus sampling described in academic paper "The Curious Case of Neural Text Degeneration" https://arxiv.org/abs/1904.09751
+extern fn LlamaSampler* sampler_init_top_p(float p, usz min_keep) @cname("llama_sampler_init_top_p");
+
+// Minimum P sampling as described in https://github.com/ggml-org/llama.cpp/pull/3841
+extern fn LlamaSampler* sampler_init_min_p(float p, usz min_keep) @cname("llama_sampler_init_min_p");
+
+// Locally Typical Sampling implementation described in the paper https://arxiv.org/abs/2202.00666.
+extern fn LlamaSampler* sampler_init_typical(float p, usz min_keep) @cname("llama_sampler_init_typical");
+
+// Updates the logits l_i` = l_i/t. When t <= 0.0f, the maximum logit is kept at it's original value, the rest are set to -inf
+extern fn LlamaSampler* sampler_init_temp(float t) @cname("llama_sampler_init_temp");
+
+// Dynamic temperature implementation (a.k.a. entropy) described in the paper https://arxiv.org/abs/2309.02772.
+extern fn LlamaSampler* sampler_init_temp_ext(float t, float delta, float exponent) @cname("llama_sampler_init_temp_ext");
+
+// XTC sampler as described in https://github.com/oobabooga/text-generation-webui/pull/6335
+extern fn LlamaSampler* sampler_init_xtc(float p, float t, usz min_keep, uint seed) @cname("llama_sampler_init_xtc");
+
+// Top n sigma sampling as described in academic paper "Top-nσ: Not All Logits Are You Need" https://arxiv.org/pdf/2411.07641
+extern fn LlamaSampler* sampler_init_top_n_sigma(float n) @cname("llama_sampler_init_top_n_sigma");
+
+// Mirostat 1.0 algorithm described in the paper https://arxiv.org/abs/2007.14966. Uses tokens instead of words.
+// tau: target cross-entropy (surprise) for the generated text
+// eta: learning rate used to update `mu`
+// m:   number of tokens considered in the estimation of `s_hat` (paper uses m = 100)
+// mu:  maximum cross-entropy, initialized to 2 * tau and updated by the algorithm
+extern fn LlamaSampler* sampler_init_mirostat(
+	int n_vocab,
+	uint seed,
+	float tau,
+	float eta,
+	int m
+) @cname("llama_sampler_init_mirostat");
+
+// Mirostat 2.0 algorithm described in the paper https://arxiv.org/abs/2007.14966. Uses tokens instead of words.
+// tau: target cross-entropy (surprise) for the generated text
+// eta: learning rate used to update `mu`
+// mu:  maximum cross-entropy, initialized to 2 * tau and updated by the algorithm
+extern fn LlamaSampler* sampler_init_mirostat_v2(
+	uint seed,
+	float tau,
+	float eta
+) @cname("llama_sampler_init_mirostat_v2");
+
+// Initializes a GBNF grammar, see grammars/README.md for details.
+// vocab:       the vocabulary that this grammar will be used with
+// grammar_str: production rules for the grammar, encoded as a string. Returns an empty grammar if empty. Returns NULL if parsing of grammar_str fails.
+// grammar_root: name of the start symbol for the grammar
+extern fn LlamaSampler* sampler_init_grammar(
+	LlamaVocab* vocab,
+	ZString grammar_str,
+	ZString grammar_root
+) @cname("llama_sampler_init_grammar");
+
+// DEPRECATED upstream ("use llama_sampler_init_grammar_lazy_patterns instead")
+extern fn LlamaSampler* sampler_init_grammar_lazy(
+	LlamaVocab* vocab,
+	ZString grammar_str,
+	ZString grammar_root,
+	ZString* trigger_words,
+	usz num_trigger_words,
+	LlamaToken* trigger_tokens,
+	usz num_trigger_tokens
+) @cname("llama_sampler_init_grammar_lazy") @deprecated("use llama_sampler_init_grammar_lazy_patterns instead");
+
+// Lazy grammar sampler, introduced in https://github.com/ggml-org/llama.cpp/pull/9639
+// trigger_patterns: list of patterns that trigger the grammar sampler; matched from the start of the
+//                   generation output, and the grammar sampler is fed content starting from its first match group
+// trigger_tokens:   list of tokens that trigger the grammar sampler; fed content starting from the trigger token included
+extern fn LlamaSampler* sampler_init_grammar_lazy_patterns(
+	LlamaVocab* vocab,
+	ZString grammar_str,
+	ZString grammar_root,
+	ZString* trigger_patterns,
+	usz num_trigger_patterns,
+	LlamaToken* trigger_tokens,
+	usz num_trigger_tokens
+) @cname("llama_sampler_init_grammar_lazy_patterns");
+
+// NOTE: Avoid using on the full vocabulary as searching for repeated tokens can become slow.
+// For example, apply top-k or top-p sampling first.
+extern fn LlamaSampler* sampler_init_penalties(
+	int n_vocab,
+	int penalty_last_n,   // last n tokens to penalize (0 = disable penalty)
+	float penalty_repeat, // must be > 0.0, 1.0 = disabled
+	float penalty_freq,   // must be finite, 0.0 = disabled
+	float penalty_present // must be finite, 0.0 = disabled
+) @cname("llama_sampler_init_penalties");
+
+// DRY sampler, designed by p-e-w, as described in: https://github.com/oobabooga/text-generation-webui/pull/5677,
+// porting Koboldcpp implementation authored by pi6am: https://github.com/LostRuins/koboldcpp/pull/982
+// processing each breaker scans the entire vocabulary, so the init cost is O(num_breakers x n_vocab)
+extern fn LlamaSampler* sampler_init_dry(
+	LlamaVocab* vocab,
+	float dry_multiplier,
+	float dry_base,
+	int dry_allowed_length,
+	int dry_penalty_last_n, // last n tokens to penalize (0 = disable penalty)
+	ZString* seq_breakers,
+	usz num_breakers
+) @cname("llama_sampler_init_dry");
+
+// adaptive-p: select tokens near a configurable target probability over time.
+//
+// transforms the token probability distribution to favor tokens that fall near a
+// user-configurable probability target. internally the sampler maintains an
+// exponential moving average of the *ORIGINAL* probabilities of selected tokens
+// at each sampling step and uses it to compute an adapted target probability.
+//
+// selects a token ID rather than just mutating candidates, so it must be last in
+// the sampler chain (like mirostat, dist, greedy). only mild truncation before this
+// sampler is recommended - e.g. apply min-p as the only other active sampler.
+//
+// target: select tokens near this probability (valid range 0.0 to 1.0; negative = disabled)
+// decay:  EMA decay for adaptation; history ~= 1/(1-decay) tokens (valid range 0.0 - 0.99)
+// seed:   RNG seed
+//
+// ref: https://github.com/ggml-org/llama.cpp/pull/17927
+extern fn LlamaSampler* sampler_init_adaptive_p(
+	float target,
+	float decay,
+	uint seed
+) @cname("llama_sampler_init_adaptive_p");
+
+extern fn LlamaSampler* sampler_init_logit_bias(
+	int n_vocab,
+	int n_logit_bias,
+	LlamaLogitBias* logit_bias
+) @cname("llama_sampler_init_logit_bias");
+
+// this sampler is meant to be used for fill-in-the-middle infilling
+// it's supposed to be used after top_k + top_p sampling
+//
+// 1. if the sum of the EOG probs times the number of candidates is higher than the sum of the other probs -> pick EOG
+// 2. combine probs of tokens that have the same prefix
+// 3. discard non-EOG tokens with low prob
+// 4. if no tokens are left -> pick EOT
+extern fn LlamaSampler* sampler_init_infill(LlamaVocab* vocab) @cname("llama_sampler_init_infill");
+
+// Returns the seed used by the sampler if applicable, LLAMA_DEFAULT_SEED otherwise
+extern fn uint sampler_get_seed(LlamaSampler* smpl) @cname("llama_sampler_get_seed");
+
+// Sample and accept a token from the idx-th output of the last evaluation.
+// For multiple outputs from one sampler, call this function in output order without gaps.
+// Shorthand for: get logits ith -> init llama_token_data_array -> sampler_apply -> accept -> return sampled token.
+// Returns the sampled token
+extern fn LlamaToken sampler_sample(LlamaSampler* smpl, LlamaContext* ctx, int idx) @cname("llama_sampler_sample");
+
+//
+// Model split
+//
+
+// Build a split GGUF final path for this chunk.
+// split_path(split_path, sizeof(split_path), "/models/ggml-model-q4_0", 2, 4) => split_path = "/models/ggml-model-q4_0-00002-of-00004.gguf"
+// Returns the split_path length.
+// split_path is a caller-allocated writable output buffer (the C function
+// writes into it with snprintf), so it is char*, not ZString - a ZString
+// parameter would let a caller pass a string literal straight into a
+// write, corrupting/segfaulting on the read-only literal.
+extern fn int split_path(char* split_path, usz maxlen, ZString path_prefix, int split_no, int split_count) @cname("llama_split_path");
+
+// Extract the path prefix from the split_path if and only if the split_no and split_count match.
+// split_prefix(split_prefix, 64, "/models/ggml-model-q4_0-00002-of-00004.gguf", 2, 4) => split_prefix = "/models/ggml-model-q4_0"
+// Returns the split_prefix length.
+// split_prefix (first param) is likewise a writable output buffer, not a read-only string.
+extern fn int split_prefix(char* split_prefix, usz maxlen, ZString split_path, int split_no, int split_count) @cname("llama_split_prefix");
+
+// Print system information
+extern fn ZString print_system_info() @cname("llama_print_system_info");
+
+// Set callback for all future logging events.
+// If this is not called, or NULL is supplied, everything is output on stderr.
+// The logger state is global so these functions are NOT thread safe.
+extern fn void log_get(GgmlLogCallback* log_callback, void** user_data) @cname("llama_log_get");
+extern fn void log_set(GgmlLogCallback log_callback, void* user_data) @cname("llama_log_set");
+
+//
+// Performance utils
+//
+// NOTE: Used by llama.cpp examples/tools, avoid using in third-party apps. Instead, do your own performance measurements.
+//
+
+struct LlamaPerfContextData
+{
+	// ms == milliseconds
+	double t_start_ms;  // absolute start time
+	double t_load_ms;   // time needed for loading the model
+	double t_p_eval_ms; // time needed for processing the prompt
+	double t_eval_ms;   // time needed for generating tokens
+
+	int n_p_eval;        // number of prompt tokens
+	int n_eval;          // number of generated tokens
+	int n_reused;        // number of times a ggml compute graph had been reused
+	int n_reallocs_same; // number of graph reallocations during inference with an unchanged graph size
+	int n_reallocs_diff; // number of graph reallocations during inference with a changed graph size
+}
+
+struct LlamaPerfSamplerData
+{
+	double t_sample_ms; // time needed for sampling in ms
+
+	int n_sample;       // number of sampled tokens
+}
+
+extern fn LlamaPerfContextData perf_context(LlamaContext* ctx) @cname("llama_perf_context");
+extern fn void perf_context_print(LlamaContext* ctx) @cname("llama_perf_context_print");
+extern fn void perf_context_reset(LlamaContext* ctx) @cname("llama_perf_context_reset");
+
+// NOTE: the following work only with samplers constructed via llama_sampler_chain_init
+extern fn LlamaPerfSamplerData perf_sampler(LlamaSampler* chain) @cname("llama_perf_sampler");
+extern fn void perf_sampler_print(LlamaSampler* chain) @cname("llama_perf_sampler_print");
+extern fn void perf_sampler_reset(LlamaSampler* chain) @cname("llama_perf_sampler_reset");
+
+//
+// training
+//
+
+// function that returns whether or not a given tensor contains trainable parameters
+alias LlamaOptParamFilter = fn bool (GgmlTensor* tensor, void* userdata);
+
+// always returns true
+extern fn bool opt_param_filter_all(GgmlTensor* tensor, void* userdata) @cname("llama_opt_param_filter_all");
+
+struct LlamaOptParams
+{
+	uint n_ctx_train; // assumed context size post training, use context size specified in llama_context if 0
+
+	LlamaOptParamFilter param_filter; // callback for determining which tensors contain trainable parameters
+	void* param_filter_ud;            // userdata for determining which tensors contain trainable parameters
+
+	GgmlOptGetOptimizerParams get_opt_pars; // callback for calculating optimizer parameters
+	void* get_opt_pars_ud;                   // userdata for calculating optimizer parameters
+
+	GgmlOptOptimizerType optimizer_type;
+}
+
+extern fn void opt_init(LlamaContext* lctx, LlamaModel* model, LlamaOptParams lopt_params) @cname("llama_opt_init");
+
+extern fn void opt_epoch(
+	LlamaContext* lctx,
+	GgmlOptDataset dataset,
+	GgmlOptResult result_train,
+	GgmlOptResult result_eval,
+	long idata_split,
+	GgmlOptEpochCallback callback_train,
+	GgmlOptEpochCallback callback_eval
+) @cname("llama_opt_epoch");

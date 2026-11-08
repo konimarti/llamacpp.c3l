@@ -1,0 +1,282 @@
+// state_batch.c3i
+// State / sessions save and load, decoding and encoding, extended batch API,
+// thread counts and context properties, logits and embeddings getters,
+// and experimental backend sampling API.
+//
+// Source: include/llama.h (see reference/llama.h), lines 826-1202 of
+// https://github.com/ggml-org/llama.cpp
+module llama;
+
+// --- Types local to this section ---
+
+// Opaque handle for extended batch
+typedef LlamaBatchExt = void;
+
+struct LlamaEmbd
+{
+	float* data;
+	usz n_rows; // number of embedding rows in data
+	usz n_embd; // size of one row
+}
+
+constdef LlamaStateSeqFlags : uint
+{
+	STATE_SEQ_FLAGS_NONE         = 0,
+	STATE_SEQ_FLAGS_SWA_ONLY     = 1, // for backwards-compat
+	STATE_SEQ_FLAGS_PARTIAL_ONLY = 1, // work only with partial states, such as SWA KV cache or recurrent cache (e.g. Mamba)
+	STATE_SEQ_FLAGS_ON_DEVICE    = 2, // Keeps the tensor data on device buffers (i.e. not accessible in host memory, but faster save/load). Getting the state for a seq_id with this flag invalidates all prior states gotten for that seq_id with this flag.
+}
+
+//
+// State / sessions
+//
+
+// Returns the *actual* size in bytes of the state
+// (logits, embedding and memory)
+// Only use when saving the state, not when restoring it, otherwise the size may be too small.
+extern fn usz state_get_size(LlamaContext* ctx) @cname("llama_state_get_size");
+extern fn usz get_state_size(LlamaContext* ctx) @cname("llama_get_state_size") @deprecated("use llama_state_get_size instead");
+
+// Copies the state to the specified destination address.
+// Destination needs to have allocated enough memory.
+// Returns the number of bytes copied
+extern fn usz state_get_data(LlamaContext* ctx, char* dst, usz size) @cname("llama_state_get_data");
+extern fn usz copy_state_data(LlamaContext* ctx, char* dst) @cname("llama_copy_state_data") @deprecated("use llama_state_get_data instead");
+
+// Set the state reading from the specified address
+// Returns the number of bytes read
+extern fn usz state_set_data(LlamaContext* ctx, char* src, usz size) @cname("llama_state_set_data");
+extern fn usz set_state_data(LlamaContext* ctx, char* src) @cname("llama_set_state_data") @deprecated("use llama_state_set_data instead");
+
+// Save/load session file
+extern fn bool state_load_file(LlamaContext* ctx, ZString path_session, LlamaToken* tokens_out, usz n_token_capacity, usz* n_token_count_out) @cname("llama_state_load_file");
+extern fn bool load_session_file(LlamaContext* ctx, ZString path_session, LlamaToken* tokens_out, usz n_token_capacity, usz* n_token_count_out) @cname("llama_load_session_file") @deprecated("use llama_state_load_file instead");
+
+extern fn bool state_save_file(LlamaContext* ctx, ZString path_session, LlamaToken* tokens, usz n_token_count) @cname("llama_state_save_file");
+extern fn bool save_session_file(LlamaContext* ctx, ZString path_session, LlamaToken* tokens, usz n_token_count) @cname("llama_save_session_file") @deprecated("use llama_state_save_file instead");
+
+// Get the exact size needed to copy the state of a single sequence
+extern fn usz state_seq_get_size(LlamaContext* ctx, LlamaSeqId seq_id) @cname("llama_state_seq_get_size");
+
+// Copy the state of a single sequence into the specified buffer
+extern fn usz state_seq_get_data(LlamaContext* ctx, char* dst, usz size, LlamaSeqId seq_id) @cname("llama_state_seq_get_data");
+
+// Copy the sequence data (originally copied with `llama_state_seq_get_data`) into the specified sequence
+// Returns:
+//  - Positive: Ok
+//  - Zero: Failed to load
+extern fn usz state_seq_set_data(LlamaContext* ctx, char* src, usz size, LlamaSeqId dest_seq_id) @cname("llama_state_seq_set_data");
+
+extern fn usz state_seq_save_file(LlamaContext* ctx, ZString filepath, LlamaSeqId seq_id, LlamaToken* tokens, usz n_token_count) @cname("llama_state_seq_save_file");
+
+// If tokens_out is NULL, only the token count is reported through n_token_count_out and no state is loaded
+extern fn usz state_seq_load_file(LlamaContext* ctx, ZString filepath, LlamaSeqId dest_seq_id, LlamaToken* tokens_out, usz n_token_capacity, usz* n_token_count_out) @cname("llama_state_seq_load_file");
+
+extern fn usz state_seq_get_size_ext(LlamaContext* ctx, LlamaSeqId seq_id, LlamaStateSeqFlags flags) @cname("llama_state_seq_get_size_ext");
+
+extern fn usz state_seq_get_data_ext(LlamaContext* ctx, char* dst, usz size, LlamaSeqId seq_id, LlamaStateSeqFlags flags) @cname("llama_state_seq_get_data_ext");
+
+extern fn usz state_seq_set_data_ext(LlamaContext* ctx, char* src, usz size, LlamaSeqId dest_seq_id, LlamaStateSeqFlags flags) @cname("llama_state_seq_set_data_ext");
+
+//
+// Decoding
+//
+
+// Return batch for single sequence of tokens
+// The sequence ID will be fixed to 0
+// The position of the tokens will be tracked automatically by llama_decode
+//
+// NOTE: this is a helper function to facilitate transition to the new batch API - avoid using it
+extern fn LlamaBatch batch_get_one(LlamaToken* tokens, int n_tokens) @cname("llama_batch_get_one");
+
+// Allocates a batch of tokens on the heap that can hold a maximum of n_tokens
+// Each token can be assigned up to n_seq_max sequence ids
+// The batch has to be freed with llama_batch_free()
+// If embd != 0, llama_batch.embd will be allocated with size of n_tokens * embd * sizeof(float)
+// Otherwise, llama_batch.token will be allocated to store n_tokens llama_token
+// The rest of the llama_batch members are allocated with size n_tokens
+// All members are left uninitialized
+extern fn LlamaBatch batch_init(int n_tokens, int embd, int n_seq_max) @cname("llama_batch_init");
+
+// Frees a batch of tokens allocated with llama_batch_init()
+extern fn void batch_free(LlamaBatch batch) @cname("llama_batch_free");
+
+// Process a batch of tokens.
+// In contrast to llama_decode() - this call does not use KV cache.
+// For encode-decoder contexts, processes the batch using the encoder.
+// Can store the encoder output internally for later use by the decoder's cross-attention layers.
+//   0 - success
+// < 0 - error. the memory state is restored to the state before this call
+extern fn int encode(LlamaContext* ctx, LlamaBatch batch) @cname("llama_encode");
+
+// Process a batch of tokens.
+// Requires the context to have a memory.
+// For encode-decoder contexts, processes the batch using the decoder.
+// Positive return values does not mean a fatal error, but rather a warning.
+// Upon fatal-error or abort, the ubatches that managed to be been processed will remain in the memory state of the context
+//   To handle this correctly, query the memory state using llama_memory_seq_pos_min() and llama_memory_seq_pos_max()
+// Upon other return values, the memory state is restored to the state before this call
+//    0 - success
+//    1 - could not find a KV slot for the batch (try reducing the size of the batch or increase the context)
+//    2 - aborted     (processed ubatches will remain in the context's memory)
+//   -1 - invalid input batch
+// < -1 - fatal error (processed ubatches will remain in the context's memory)
+extern fn int decode(LlamaContext* ctx, LlamaBatch batch) @cname("llama_decode");
+
+//
+// Extended batch API
+//
+
+extern fn LlamaBatchExt* batch_ext_init(LlamaContext* ctx) @cname("llama_batch_ext_init");
+extern fn void batch_ext_free(LlamaBatchExt* batch) @cname("llama_batch_ext_free");
+extern fn void batch_ext_clear(LlamaBatchExt* batch) @cname("llama_batch_ext_clear");
+
+// Add an input token to the batch, with default values:
+//     id = LLAMA_TOKEN_NULL
+//     embd = nullptr
+//     pos = not set, the caller must set it with llama_batch_ext_set_pos()
+// Returns the batch index (>= 0)
+// On error:
+//     -1: batch is full
+//     -2: token is invalid (id == LLAMA_TOKEN_NULL or invalid embd)
+//     -3: invalid sequence id
+extern fn int batch_ext_add(LlamaBatchExt* batch, LlamaSeqId seq_id) @cname("llama_batch_ext_add");
+
+// Add an input token to the batch, with a specified token ID or token embedding
+extern fn int batch_ext_add_token(LlamaBatchExt* batch, LlamaSeqId seq_id, LlamaToken id) @cname("llama_batch_ext_add_token");
+extern fn int batch_ext_add_embd(LlamaBatchExt* batch, LlamaSeqId seq_id, LlamaEmbd embd) @cname("llama_batch_ext_add_embd");
+
+// Add the token at index idx in the batch to another sequence id. The position will stays the same.
+// Note: this should be called before other _set() functions
+extern fn bool batch_ext_add_seq(LlamaBatchExt* batch, int idx, LlamaSeqId seq_id) @cname("llama_batch_ext_add_seq");
+
+// Set the token embedding for the token at index idx in the batch
+// use it after llama_batch_ext_add_token() to have an entry with both a token id and an embedding
+extern fn bool batch_ext_set_embd_token(LlamaBatchExt* batch, int idx, LlamaEmbd embd) @cname("llama_batch_ext_set_embd_token");
+
+// Set the "state" embedding for the token at index idx in the batch
+// "state" here means extra hidden state carried over from a previous stage, e.g.:
+//   - MTP: state from N layers of the target model
+//   - Qwen3 VL (deepstack): state from N layers of the vision encoder
+//   - LiliCorr: context embeddings for the transformers
+// Returns false if the context does not take a state embedding (MTP and LiliCorr contexts do)
+extern fn bool batch_ext_set_embd_state(LlamaBatchExt* batch, int idx, LlamaEmbd embd) @cname("llama_batch_ext_set_embd_state");
+
+// Set if output embeddings should be available for the token at index idx in the batch
+// Note: for now, this is equivalent to setting the output logits
+extern fn bool batch_ext_set_output_embd(LlamaBatchExt* batch, int idx, bool value) @cname("llama_batch_ext_set_output_embd");
+
+// Set output logits for the token at index idx in the batch
+// Note: for now, this is equivalent to setting the output embd
+extern fn bool batch_ext_set_output_logits(LlamaBatchExt* batch, int idx, bool value) @cname("llama_batch_ext_set_output_logits");
+
+// Set custom position for the token at index idx in the batch
+// For M-RoPE models:
+//     - Embedding tokens must have n_pos_per_embd positions per token, in order [t, y, x, z]; t is also the KV cache position
+//     - Text token only requires one single position per token
+extern fn bool batch_ext_set_pos(LlamaBatchExt* batch, int idx, LlamaPos* pos) @cname("llama_batch_ext_set_pos");
+
+// Return values are the same as llama_decode()
+extern fn int process(LlamaContext* ctx, LlamaProcessType type, LlamaBatchExt* batch) @cname("llama_process");
+
+// Set the number of threads used for decoding
+// n_threads is the number of threads used for generation (single token)
+// n_threads_batch is the number of threads used for prompt and batch processing (multiple tokens)
+extern fn void set_n_threads(LlamaContext* ctx, int n_threads, int n_threads_batch) @cname("llama_set_n_threads");
+
+// Get the number of threads used for generation of a single token.
+extern fn int n_threads(LlamaContext* ctx) @cname("llama_n_threads");
+
+// Get the number of threads used for prompt and batch processing (multiple token).
+extern fn int n_threads_batch(LlamaContext* ctx) @cname("llama_n_threads_batch");
+
+// Set whether the context outputs embeddings or not
+// TODO: rename to avoid confusion with llama_get_embeddings()
+extern fn void set_embeddings(LlamaContext* ctx, bool embeddings) @cname("llama_set_embeddings");
+
+// Set whether to use causal attention or not
+// If set to true, the model will only attend to the past tokens
+extern fn void set_causal_attn(LlamaContext* ctx, bool causal_attn) @cname("llama_set_causal_attn");
+
+// Returns whether the context is currently using causal attention
+extern fn bool get_causal_attn(LlamaContext* ctx) @cname("llama_get_causal_attn");
+
+// Set whether the model is in warmup mode or not
+// If true, all model tensors are activated during llama_decode() to load and cache their weights.
+//
+// note: using this can cause extra graph reallocations because it changes the graph topology with MoE models,
+//       so it is generally not recommended to use in practice. will be removed in the future
+extern fn void set_warmup(LlamaContext* ctx, bool warmup) @cname("llama_set_warmup") @deprecated("user code should do warmup runs manually [TAG_LLAMA_GRAPH_NO_WARMUP]");
+
+// Set abort callback
+extern fn void set_abort_callback(LlamaContext* ctx, GgmlAbortCallback abort_callback, void* abort_callback_data) @cname("llama_set_abort_callback");
+
+// Wait until all computations are finished
+// This is automatically done when using one of the functions below to obtain the computation results
+// and is not necessary to call it explicitly in most cases
+extern fn void synchronize(LlamaContext* ctx) @cname("llama_synchronize");
+
+// Token logits obtained from the last call to llama_decode()
+// The logits for which llama_batch.logits[i] != 0 are stored contiguously
+// in the order they have appeared in the batch.
+// Rows: number of tokens for which llama_batch.logits[i] != 0
+// Cols: n_vocab
+// TODO: deprecate in favor of llama_get_logits_ith() (ref: https://github.com/ggml-org/llama.cpp/pull/14853#issuecomment-3113143522)
+extern fn float* get_logits(LlamaContext* ctx) @cname("llama_get_logits");
+
+// Logits for the ith token. For positive indices, Equivalent to:
+// llama_get_logits(ctx) + ctx->output_ids[i]*n_vocab
+// Negative indices can be used to access logits in reverse order, -1 is the last logit.
+// returns NULL for invalid ids.
+extern fn float* get_logits_ith(LlamaContext* ctx, int i) @cname("llama_get_logits_ith");
+
+// Get all output token embeddings.
+// when pooling_type == LLAMA_POOLING_TYPE_NONE or when using a generative model,
+// the embeddings for which llama_batch.logits[i] != 0 are stored contiguously
+// in the order they have appeared in the batch.
+// shape: [n_outputs*n_embd]
+// Otherwise, returns NULL.
+// TODO: deprecate in favor of llama_get_embeddings_ith() (ref: https://github.com/ggml-org/llama.cpp/pull/14853#issuecomment-3113143522)
+extern fn float* get_embeddings(LlamaContext* ctx) @cname("llama_get_embeddings");
+
+// Get the embeddings for the ith token. For positive indices, Equivalent to:
+// llama_get_embeddings(ctx) + ctx->output_ids[i]*n_embd
+// Negative indices can be used to access embeddings in reverse order, -1 is the last embedding.
+// shape: [n_embd] (1-dimensional)
+// returns NULL for invalid ids.
+extern fn float* get_embeddings_ith(LlamaContext* ctx, int i) @cname("llama_get_embeddings_ith");
+
+// Get the embeddings for a sequence id
+// Returns NULL if pooling_type is LLAMA_POOLING_TYPE_NONE
+// when pooling_type == LLAMA_POOLING_TYPE_RANK, returns float[n_cls_out] with the rank(s) of the sequence
+// otherwise: float[n_embd] (1-dimensional)
+extern fn float* get_embeddings_seq(LlamaContext* ctx, LlamaSeqId seq_id) @cname("llama_get_embeddings_seq");
+
+//
+// backend sampling API [EXPERIMENTAL]
+// note: use only if the llama_context was created with at least one llama_sampler_seq_config
+//
+
+// Get the backend sampled token for the ith token.
+// With multiple outputs, sampler state advances when the token is accepted,
+// not when it is read through this function.
+// When accepting multiple outputs, accept a contiguous prefix in output order.
+// Returns LLAMA_TOKEN_NULL if no token was sampled.
+extern fn LlamaToken get_sampled_token_ith(LlamaContext* ctx, int i) @cname("llama_get_sampled_token_ith");
+
+// Get the backend sampled probabilities for the ith token
+// The index matches llama_get_sampled_token_ith().
+// Returns NULL if no probabilities were generated.
+extern fn float* get_sampled_probs_ith(LlamaContext* ctx, int i) @cname("llama_get_sampled_probs_ith");
+extern fn uint get_sampled_probs_count_ith(LlamaContext* ctx, int i) @cname("llama_get_sampled_probs_count_ith");
+
+// Get the backend sampled logits for the ith token
+// Returns NULL if no logits were sampled.
+extern fn float* get_sampled_logits_ith(LlamaContext* ctx, int i) @cname("llama_get_sampled_logits_ith");
+extern fn uint get_sampled_logits_count_ith(LlamaContext* ctx, int i) @cname("llama_get_sampled_logits_count_ith");
+
+// Get the backend sampled candidates (token ids) for the ith token
+// These are needed to map probability/logit indices to vocab token ids.
+// Returns NULL if no candidates were sampled.
+extern fn LlamaToken* get_sampled_candidates_ith(LlamaContext* ctx, int i) @cname("llama_get_sampled_candidates_ith");
+extern fn uint get_sampled_candidates_count_ith(LlamaContext* ctx, int i) @cname("llama_get_sampled_candidates_count_ith");

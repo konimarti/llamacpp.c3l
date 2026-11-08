@@ -1,0 +1,8 @@
+build/
+obj/
+.claude/
+STYLE_CONTRACT.md
+reference/
+/test_*
+.github/ci-stub/lib/
+ci-stub-lib/
