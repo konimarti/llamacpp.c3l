@@ -172,6 +172,24 @@ jobs:
           Remove-Item "$StubDir\*.obj", "$StubDir\*.exp" -Force -ErrorAction SilentlyContinue
           Get-ChildItem $StubDir
 
+      # Unit tests (test/*.c3) against the stub, same linking setup as the
+      # generate build below. c3c links+runs the test binary itself, so the
+      # runtime loader path needs to be set here too, not just -L.
+      - name: Run unit tests against stub
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows)
+              libdir="ci-stub-lib"
+              PATH="$PWD/$libdir:$PATH" c3c test llama -L "$libdir" ;;
+            macOS)
+              libdir=".github/ci-stub/lib"
+              DYLD_LIBRARY_PATH="$PWD/$libdir" c3c test llama -L "$libdir" ;;
+            *)
+              libdir=".github/ci-stub/lib"
+              LD_LIBRARY_PATH="$PWD/$libdir" c3c test llama -L "$libdir" ;;
+          esac
+
       # project.json's generate target already declares linked-libraries, so
       # only the search path (-L) needs to be supplied here.
       - name: Build generate against stub

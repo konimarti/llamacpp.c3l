@@ -3,9 +3,11 @@
 	"version": "0.1.0",
 	"output": "build",
 	"sources": [ "src/**" ],
+	"test-sources": [ "test/**" ],
 	"targets": {
 		"llama": {
-			"type": "static-lib"
+			"type": "static-lib",
+			"linked-libraries": [ "llama", "ggml", "ggml-base", "ggml-cpu" ]
 		},
 		"generate": {
 			"type": "executable",
