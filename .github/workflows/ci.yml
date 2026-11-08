@@ -86,6 +86,24 @@ jobs:
       # generate target, on every platform.
       # ---------------------------------------------------------------------
 
+      # The stub compiles against upstream's real headers for ABI-correct
+      # struct layouts, but this repo does not commit a copy of them; fetch
+      # just the handful of files needed, pinned to one llama.cpp commit for
+      # reproducibility.
+      - name: Fetch upstream llama.cpp/ggml headers for the stub build
+        shell: bash
+        env:
+          LLAMA_CPP_COMMIT: d6be065572cdb7bf64014c8c5771e210c9570e44
+        run: |
+          set -e
+          mkdir -p upstream-headers
+          base="https://raw.githubusercontent.com/ggml-org/llama.cpp/${LLAMA_CPP_COMMIT}"
+          curl -fsSL --retry 3 --retry-delay 5 --retry-connrefused -o upstream-headers/llama.h "${base}/include/llama.h"
+          for f in ggml.h ggml-backend.h ggml-cpu.h ggml-opt.h ggml-alloc.h; do
+            curl -fsSL --retry 3 --retry-delay 5 --retry-connrefused -o "upstream-headers/${f}" "${base}/ggml/include/${f}"
+          done
+          ls -la upstream-headers
+
       # Linux/macOS: plain cc/clang, verified locally on Linux (see
       # .github/ci-stub/ for the exact commands this mirrors).
       - name: Build stub libllama (Linux/macOS)
@@ -99,7 +117,7 @@ jobs:
             macOS) ext=dylib ;;
           esac
           cc -fPIC -shared -O2 \
-            -I.github/ci-stub -Ireference \
+            -I.github/ci-stub -Iupstream-headers \
             .github/ci-stub/stub_llama.c \
             -o ".github/ci-stub/lib/libllama.$ext"
           for lib in ggml ggml-base ggml-cpu; do
@@ -108,7 +126,7 @@ jobs:
           ls -la .github/ci-stub/lib
 
       # Windows: MSVC cl.exe (set up by ilammy/msvc-dev-cmd above). LLAMA_API
-      # in reference/llama.h only expands to __declspec(dllexport) when
+      # in upstream llama.h only expands to __declspec(dllexport) when
       # LLAMA_SHARED+LLAMA_BUILD are both defined; without them a Windows
       # DLL exports nothing and MSVC skips generating the .lib entirely.
       - name: Build stub libllama (Windows)
@@ -119,7 +137,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $StubDir | Out-Null
 
           cl.exe /nologo /LD /MD /O2 `
-            /I "reference" /I ".github\ci-stub" `
+            /I "upstream-headers" /I ".github\ci-stub" `
             /DLLAMA_SHARED /DLLAMA_BUILD `
             ".github\ci-stub\stub_llama.c" `
             "/Fe:$StubDir\llama.dll" `
